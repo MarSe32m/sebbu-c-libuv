@@ -1,0 +1,28 @@
+{
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": [
+                "swift"
+            ],
+            "args": [],
+            "cwd": "${workspaceFolder:sebbu-c-libuv}",
+            "name": "Debug Development",
+            "program": "${workspaceFolder:sebbu-c-libuv}\\.build\\debug\\Development.exe",
+            "preLaunchTask": "swift: Build Debug Development"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": [
+                "swift"
+            ],
+            "args": [],
+            "cwd": "${workspaceFolder:sebbu-c-libuv}",
+            "name": "Release Development",
+            "program": "${workspaceFolder:sebbu-c-libuv}\\.build\\release\\Development.exe",
+            "preLaunchTask": "swift: Build Release Development"
+        }
+    ]
+}

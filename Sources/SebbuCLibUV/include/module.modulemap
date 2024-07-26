@@ -1,0 +1,4 @@
+module ManualUV {
+    header "include.h"
+    export *
+}
