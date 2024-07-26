@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 5.10
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -67,6 +67,9 @@ sources.append("src/unix/darwin-proctitle.c")
 sources.append("src/unix/darwin-stub.h")
 sources.append("src/unix/darwin.c")
 sources.append("src/unix/fsevents.c")
+sources.append("src/unix/bsd-ifaddrs.c")
+sources.append("src/unix/kqueue.c")
+sources.append("src/unix/random-getentropy.c")
 #elseif os(Linux)
 sources.append(contentsOf: sourcesCommon)
 sources.append("src/include/linux.h")
