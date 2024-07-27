@@ -1,4 +1,4 @@
-module ManualUV {
+module SebbuCLibUV {
     header "include.h"
     export *
 }

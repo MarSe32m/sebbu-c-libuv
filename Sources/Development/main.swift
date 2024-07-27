@@ -1,40 +1,4 @@
-//import NetcodeC
-//import Foundation
-//netcode_init()
-//
-//enum ProgramType: String {
-//    case client = "Client"
-//    case server = "Server"
-//    case clientAndServer = "ClientAndServer"
-//}
-//var type: ProgramType = .clientAndServer
-//
-//if CommandLine.arguments.count > 1 {
-//    type = ProgramType(rawValue: CommandLine.arguments[1]) ?? .clientAndServer
-//}
-//
-//switch type {
-//    case .client:
-//        print("Running client")
-//        client()
-//        //runClient()
-//    case .server:
-//        print("Running server")
-//        server()
-//        //runServer()
-//    case .clientAndServer:
-//        Thread.detachNewThread {
-//            runServer()
-//            //server()
-//        }   
-//        Thread.sleep(forTimeInterval: 1)
-//        //client()
-//        runClient()
-//}
-//
-
-//import uv
-import ManualUV
+import SebbuCLibUV
 
 
 func on_read(_ handle: UnsafePointer<uv_udp_t>?, _ nread: Int, _ buffer: UnsafePointer<uv_buf_t>?, _ address: UnsafePointer<sockaddr>?, _ flags: UInt32) {
