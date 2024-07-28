@@ -1,5 +1,16 @@
 import SebbuCLibUV
 
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#elseif os(Windows)
+import WinSDK
+import ucrt
+#elseif canImport(Darwin)
+import Darwin
+#endif
+
 public final class IPv4Address {
     @usableFromInline
     internal var address: sockaddr_in

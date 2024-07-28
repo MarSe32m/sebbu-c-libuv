@@ -6,10 +6,9 @@ Thread.detachNewThread {
     let serverSocket = UDPChannel { bytes, remoteAddress in 
         let text = String(bytes: bytes, encoding: .utf8)
         print("Server received from:", remoteAddress, "data:", bytes, "text:", text ?? "")
-        print("As string")
         packets.append((bytes, remoteAddress))
     }
-    let bindAddress = IPAddress.v4(.create(host: "0.0.0.0", port: 25565)!)
+    let bindAddress = IPAddress.v4(.create(host: "0.0.0.0", port: 25566)!)
     serverSocket.bind(address: bindAddress)
     while true {
         EventLoop.default.run(.once)

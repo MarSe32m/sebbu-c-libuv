@@ -1,4 +1,3 @@
-
 public protocol Allocator {
     func allocate(_ size: Int) -> UnsafeMutablePointer<UInt8>
     func deallocate(_ ptr: UnsafeMutablePointer<UInt8>)
