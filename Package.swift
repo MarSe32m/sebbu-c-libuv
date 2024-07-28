@@ -85,6 +85,7 @@ sources.append("src/unix/random-sysctl-linux.c")
 
 let package = Package(
     name: "sebbu-c-libuv",
+    platforms: [.macOS(.v11), .iOS(.v14)],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(

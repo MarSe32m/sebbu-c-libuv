@@ -44,7 +44,6 @@ public final class UDPChannel {
     public func bind(address: IPAddress, flags: UDPChannelFlags = [], sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
         guard _handle == nil else { 
             fatalError("Handle was not nil")
-            return
         }
         // Allocate and initialize the udp handle
         _handle = .allocate(capacity: 1)
@@ -209,7 +208,6 @@ public final class UDPConnectedChannel {
     public func connect(remoteAddress: IPAddress, flags: UDPChannelFlags = [], sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
         guard _handle == nil else { 
             fatalError("Handle was not nil")
-            return
         }
         // Allocate and initialize the udp handle
         _handle = .allocate(capacity: 1)
