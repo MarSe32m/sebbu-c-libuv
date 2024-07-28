@@ -19,6 +19,16 @@ public struct UDPChannelFlags: OptionSet {
     public static let recvmmsg = UDPChannelFlags(rawValue: numericCast(UV_UDP_RECVMMSG.rawValue))
 }
 
+public enum UDPChannelError: Error {
+    case channelAlreadyBound(reason: String)
+    case channelAlreadyConnected(reason: String)
+    case failedToInitializeHandle(reason: String)
+    case failedToBind(reason: String)
+    case failedToConnect(reason: String)
+    case failedToStartReceiving(reason: String)
+    case failedToSend(reason: String)
+}
+
 public final class UDPChannel {
     public let eventLoop: EventLoop
 

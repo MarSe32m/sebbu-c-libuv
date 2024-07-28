@@ -4,9 +4,16 @@ public final class AsyncUDPChannel {
     @usableFromInline
     internal let _socket: UDPChannel
 
+    @usableFromInline
+    internal let _stream: AsyncStream<(data: [UInt8], address: IPAddress)>
+
+    @usableFromInline
+    internal let _streamWriter: AsyncStream<(data: [UInt8], address: IPAddress)>.Continuation
+
     public init(loop: EventLoop = .default) {
         self.eventLoop = loop
         self._socket = UDPChannel(loop: loop, nil)
+        (_stream, _streamWriter) = AsyncStream<(data: [UInt8], address: IPAddress)>.makeStream()
         self._socket.onReceive = { [unowned self] bytes, address in 
             self.onReceive(bytes, address)
         }
@@ -32,7 +39,24 @@ public final class AsyncUDPChannel {
 
     @usableFromInline
     internal func onReceive(_ data: [UInt8], _ address: IPAddress) {
-        //TODO: Yield to an AsyncStream?
+        _streamWriter.yield((data, address))
+    }
+}
+
+extension AsyncUDPChannel: AsyncSequence {
+    public typealias Element = (data: [UInt8], address: IPAddress)
+
+    public struct AsyncIterator: AsyncIteratorProtocol {
+        @usableFromInline
+        internal var wrappedIterator: AsyncStream<(data: [UInt8], address: IPAddress)>.AsyncIterator
+
+        public mutating func next() async -> AsyncUDPChannel.Element? {
+            await wrappedIterator.next()
+        }
+    }
+
+    public func makeAsyncIterator() -> AsyncIterator {
+        AsyncIterator(wrappedIterator: _stream.makeAsyncIterator())
     }
 }
 
@@ -44,15 +68,20 @@ public final class AsyncUDPConnectedChannel {
     @usableFromInline
     internal let _socket: UDPConnectedChannel
 
+    @usableFromInline
+    internal let _stream: AsyncStream<(data: [UInt8], address: IPAddress)>
+
+    @usableFromInline
+    internal let _streamWriter: AsyncStream<(data: [UInt8], address: IPAddress)>.Continuation
+
     public init(loop: EventLoop = .default) {
         self.eventLoop = loop
         self._socket = UDPConnectedChannel(loop: loop, nil)
+        (_stream, _streamWriter) = AsyncStream<(data: [UInt8], address: IPAddress)>.makeStream()
         self._socket.onReceive = { [unowned self] bytes, address in 
             self.onReceive(bytes, address)
         }
     }
-
-
 
     public func connect(remoteAddress: IPAddress, flags: UDPChannelFlags = [], sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
         _socket.connect(remoteAddress: remoteAddress, flags: flags, sendBufferSize: sendBufferSize, recvBufferSize: recvBufferSize)
@@ -74,8 +103,23 @@ public final class AsyncUDPConnectedChannel {
 
     @usableFromInline
     internal func onReceive(_ data: [UInt8], _ address: IPAddress) {
-        //TODO: Yield to an AsyncStream?
+        _streamWriter.yield((data, address))
     }
 }
 
-//TODO: AsyncStream conformance
+extension AsyncUDPConnectedChannel: AsyncSequence {
+    public typealias Element = (data: [UInt8], address: IPAddress)
+
+    public struct AsyncIterator: AsyncIteratorProtocol {
+        @usableFromInline
+        internal var wrappedIterator: AsyncStream<(data: [UInt8], address: IPAddress)>.AsyncIterator
+
+        public mutating func next() async -> AsyncUDPConnectedChannel.Element? {
+            await wrappedIterator.next()
+        }
+    }
+
+    public func makeAsyncIterator() -> AsyncIterator {
+        AsyncIterator(wrappedIterator: _stream.makeAsyncIterator())
+    }
+}
