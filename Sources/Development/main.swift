@@ -3,19 +3,24 @@ import Foundation
 
 Thread.detachNewThread {
     var packets: [(data: [UInt8], address: IPAddress)] = []
-    let serverSocket = UDPChannel { bytes, remoteAddress in 
+    let loop = EventLoop(allocator: FixedSizeAllocator(allocationSize: 1300))
+    let serverSocket = UDPChannel(loop: loop) { bytes, remoteAddress in 
         let text = String(bytes: bytes, encoding: .utf8)
-        print("Server received from:", remoteAddress, "data:", bytes, "text:", text ?? "")
+        //print("Server received from:", remoteAddress)//, "data:", bytes, "text:", text ?? "")
         packets.append((bytes, remoteAddress))
     }
     let bindAddress = IPAddress.v4(.create(host: "0.0.0.0", port: 25566)!)
-    serverSocket.bind(address: bindAddress)
+    serverSocket.bind(address: bindAddress, sendBufferSize: 4 * 1024 * 1024, recvBufferSize: 4 * 1024 * 1024)
+    var totalDataReceived = 0
     while true {
-        EventLoop.default.run(.once)
+        loop.run(.once)
         for packet in packets {
             serverSocket.send(packet.data, to: packet.address)
+            totalDataReceived += packet.data.count
         }
         packets.removeAll(keepingCapacity: true)
+
+        //print("Data received:", totalDataReceived, "bytes", packets.capacity)
     }
 }
 
@@ -39,12 +44,25 @@ guard let remoteAddressv4 = IPv4Address.create(host: host, port: port) else {
     exit(1)
 }
 let remoteAddress = IPAddress.v4(remoteAddressv4)
-let socket = UDPConnectedChannel { bytes, remoteAddress in 
-    print("Client received from:", remoteAddress, "data:", bytes)
+var totalDataReceived = 0
+let loop = EventLoop(allocator: FixedSizeAllocator(allocationSize: 1300))
+let socket = UDPConnectedChannel(loop: loop) { bytes, remoteAddress in 
+    //print("Client received from:", remoteAddress)///, "data:", bytes)
+    totalDataReceived += bytes.count
 }
-socket.connect(remoteAddress: remoteAddress)
+socket.connect(remoteAddress: remoteAddress, sendBufferSize: 256 * 1024, recvBufferSize: 256 * 1024)
+
+for i in 0..<500 * 1024 {
+    if i % 1024 == 0 {
+        loop.run(.nowait)
+        print(totalDataReceived)
+    }
+    let bytes = (0..<1024).map { _ in UInt8.random(in: .min ... .max) }
+    socket.send(bytes)
+}
 
 while let line = readLine() {
     let bytes = [UInt8](line.utf8)
     socket.send(bytes)
+    loop.run(.nowait)
 }

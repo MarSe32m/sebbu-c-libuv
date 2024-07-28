@@ -1,11 +1,11 @@
 public protocol Allocator {
-    func allocate(_ size: Int) -> UnsafeMutablePointer<UInt8>
+    func allocate(_ size: Int) -> (Int, UnsafeMutablePointer<UInt8>)
     func deallocate(_ ptr: UnsafeMutablePointer<UInt8>)
 }
 
 public extension Allocator {
-    func allocate(_ size: Int) -> UnsafeMutablePointer<UInt8> {
-        .allocate(capacity: size)
+    func allocate(_ size: Int) -> (Int, UnsafeMutablePointer<UInt8>) {
+        (size, .allocate(capacity: size))
     }
 
     func deallocate(_ ptr: UnsafeMutablePointer<UInt8>) {
@@ -17,7 +17,7 @@ public struct MallocAllocator: Allocator {
     public init() {}
 }
 
-public final class FixedSizeAllocator {
+public final class FixedSizeAllocator: Allocator {
     //TODO: Do we need a lock or a bounded lockfree queue here?
     @usableFromInline
     internal var cache: [UnsafeMutablePointer<UInt8>] = []
@@ -30,8 +30,8 @@ public final class FixedSizeAllocator {
         self.cacheSize = cacheSize
     }
  
-    public func allocate(_ size: Int) -> UnsafeMutablePointer<UInt8> {
-        cache.popLast() ?? .allocate(capacity: allocationSize)
+    public func allocate(_ size: Int) -> (Int, UnsafeMutablePointer<UInt8>) {
+        (allocationSize, cache.popLast() ?? .allocate(capacity: allocationSize))
     }
 
     public func deallocate(_ ptr: UnsafeMutablePointer<UInt8>) {

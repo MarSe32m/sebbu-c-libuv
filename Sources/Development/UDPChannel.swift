@@ -90,22 +90,31 @@ public final class UDPChannel {
         // Start receiving data
         result = uv_udp_recv_start(_handle) { _handle, suggestedSize, buffer in
             guard let contextPtr = _handle?.pointee.data.assumingMemoryBound(to: UDPChannelContext.self) else { return }
-            let base = UnsafeMutableRawPointer(contextPtr.pointee.allocator.allocate(numericCast(suggestedSize)))
-            buffer?.pointee.base = base.assumingMemoryBound(to: Int8.self)
-            buffer?.pointee.len = numericCast(suggestedSize)
+            let (allocatedSize, allocation) = contextPtr.pointee.allocator.allocate(numericCast(suggestedSize))
+            let base = UnsafeMutableRawPointer(allocation)
+            buffer?.pointee.base = base.bindMemory(to: Int8.self, capacity: allocatedSize)
+            buffer?.pointee.len = numericCast(allocatedSize)
         } _: { _handle, nRead, buffer, addr, flags in
-            if nRead <= 0 { 
-                //TODO: Handle this case
-                return
+            guard let _handle else {
+                fatalError("Failed to retrieve udp handle on read!")
             }
-            guard let addr, 
-                  let _handle,
-                  let buffer, 
-                  let remoteAddress = IPAddress(addr.pointee) else {
-                //TODO: Handle this case
+            guard let buffer else {
+                fatalError("Didn't receive a buffer")
                 return
             }
             let contextPtr = _handle.pointee.data.assumingMemoryBound(to: UDPChannelContext.self)
+            guard let bufferBasePtr = UnsafeMutableRawPointer(buffer.pointee.base)?.bindMemory(to: UInt8.self, capacity: numericCast(buffer.pointee.len)) else { return }
+            defer { contextPtr.pointee.allocator.deallocate(bufferBasePtr) }
+
+            if nRead < 0 { 
+                print("UDP read error:", mapError(nRead))
+                return
+            }
+
+            guard let addr, let remoteAddress = IPAddress(addr.pointee) else {
+                return
+            }
+            if nRead == 0 { print("ooo interesting") }
             let bytes = UnsafeRawBufferPointer(start: .init(buffer.pointee.base), count: numericCast(nRead))
             let bytesArray = [UInt8](bytes)
             contextPtr.pointee.onReceive?(bytesArray, remoteAddress)
@@ -122,21 +131,13 @@ public final class UDPChannel {
         }
         if data.isEmpty { return }
         to.withSocketHandle { addr in
-            // Copy the data
-            let _buffer = UnsafeMutableRawPointer(eventLoop.allocator.allocate(data.count))
-            guard let baseAddress = data.baseAddress else { fatalError("Couldn't retrieve base address") }
-            _buffer.copyMemory(from: baseAddress, byteCount: data.count)
-            let buffer = _buffer.bindMemory(to: Int8.self, capacity: data.count)
-            // Create the buffer object for libuv
-            let buf = UnsafeMutablePointer<uv_buf_t>.allocate(capacity: 1)
-            buf.initialize(to: uv_buf_init(buffer, numericCast(data.count)))
+            let buffer = UnsafeMutableBufferPointer(mutating: data.bindMemory(to: Int8.self))
+            var buf = uv_buf_init(buffer.baseAddress, numericCast(data.count))
             let contextPtr = _handle.pointee.data.assumingMemoryBound(to: UDPChannelContext.self)
-            // Allocate and initialize a sendRequest object
             let sendRequest = contextPtr.pointee.sendRequestAllocator.allocate()
             sendRequest.initialize(to: .init())
             sendRequest.pointee.data = _handle.pointee.data
-            // Perform the send
-            uv_udp_send(sendRequest, _handle, buf, 1, addr) { sendRequest, status in
+            uv_udp_send(sendRequest, _handle, &buf, 1, addr) { sendRequest, status in
                 if status != 0 {
                     print("Error when sending datagram:", mapError(status))
                     return
@@ -253,22 +254,31 @@ public final class UDPConnectedChannel {
         // Start receiving data
         result = uv_udp_recv_start(_handle) { _handle, suggestedSize, buffer in
             guard let contextPtr = _handle?.pointee.data.assumingMemoryBound(to: UDPChannelContext.self) else { return }
-            let base = UnsafeMutableRawPointer(contextPtr.pointee.allocator.allocate(numericCast(suggestedSize)))
-            buffer?.pointee.base = base.assumingMemoryBound(to: Int8.self)
-            buffer?.pointee.len = numericCast(suggestedSize)
+            let (allocatedSize, allocation) = contextPtr.pointee.allocator.allocate(numericCast(suggestedSize))
+            let base = UnsafeMutableRawPointer(allocation)
+            buffer?.pointee.base = base.bindMemory(to: Int8.self, capacity: allocatedSize)
+            buffer?.pointee.len = numericCast(allocatedSize)
         } _: { _handle, nRead, buffer, addr, flags in
-            if nRead <= 0 { 
-                //TODO: Handle this case
-                return
+            guard let _handle else {
+                fatalError("Failed to retrieve udp handle on read!")
             }
-            guard let addr, 
-                  let _handle,
-                  let buffer, 
-                  let remoteAddress = IPAddress(addr.pointee) else {
-                //TODO: Handle this case
+            guard let buffer else {
+                fatalError("Didn't receive a buffer")
                 return
             }
             let contextPtr = _handle.pointee.data.assumingMemoryBound(to: UDPChannelContext.self)
+            guard let bufferBasePtr = UnsafeMutableRawPointer(buffer.pointee.base)?.bindMemory(to: UInt8.self, capacity: numericCast(buffer.pointee.len)) else { return }
+            defer { contextPtr.pointee.allocator.deallocate(bufferBasePtr) }
+
+            if nRead < 0 { 
+                print("UDP read error:", mapError(nRead))
+                return
+            }
+
+            guard let addr, let remoteAddress = IPAddress(addr.pointee) else {
+                return
+            }
+            
             let bytes = UnsafeRawBufferPointer(start: .init(buffer.pointee.base), count: numericCast(nRead))
             let bytesArray = [UInt8](bytes)
             contextPtr.pointee.onReceive?(bytesArray, remoteAddress)
@@ -284,21 +294,13 @@ public final class UDPConnectedChannel {
             preconditionFailure("Tried to send data on a UDPConnnectedChannel that hasn't been bound")
         }
         if data.isEmpty { return }
-        // Copy the data
-        let _buffer = UnsafeMutableRawPointer(eventLoop.allocator.allocate(data.count))
-        guard let baseAddress = data.baseAddress else { fatalError("Couldn't retrieve base address") }
-        _buffer.copyMemory(from: baseAddress, byteCount: data.count)
-        let buffer = _buffer.bindMemory(to: Int8.self, capacity: data.count)
-        // Create the buffer object for libuv
-        let buf = UnsafeMutablePointer<uv_buf_t>.allocate(capacity: 1)
-        buf.initialize(to: uv_buf_init(buffer, numericCast(data.count)))
+        let buffer = UnsafeMutableBufferPointer(mutating: data.bindMemory(to: Int8.self))
+        var buf = uv_buf_init(buffer.baseAddress, numericCast(data.count))
         let contextPtr = _handle.pointee.data.assumingMemoryBound(to: UDPChannelContext.self)
-        // Allocate and initialize a sendRequest object
         let sendRequest = contextPtr.pointee.sendRequestAllocator.allocate()
         sendRequest.initialize(to: .init())
         sendRequest.pointee.data = _handle.pointee.data
-        // Perform the send
-        uv_udp_send(sendRequest, _handle, buf, 1, nil) { sendRequest, status in
+        uv_udp_send(sendRequest, _handle, &buf, 1, nil) { sendRequest, status in
             if status != 0 {
                 print("Error when sending datagram:", mapError(status))
                 return
