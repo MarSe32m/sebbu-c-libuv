@@ -229,7 +229,7 @@ public final class UDPConnectedChannel {
     //TODO: Throw errors!
     //Note: For game servers the following are good values: sendBufferSize = 4 * 1024 * 1024, recvBufferSize = 4 * 1024 * 1024
     //Note: For game clients the following are good values: sendBufferSize = 256 * 1024, recvBufferSize = 256 * 1024
-    public func connect(remoteAddress: IPAddress, flags: UDPChannelFlags = [], sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
+    public func connect(remoteAddress: IPAddress, sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
         guard _handle == nil else { 
             fatalError("Handle was not nil")
         }

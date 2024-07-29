@@ -83,8 +83,8 @@ public final class AsyncUDPConnectedChannel {
         }
     }
 
-    public func connect(remoteAddress: IPAddress, flags: UDPChannelFlags = [], sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
-        _socket.connect(remoteAddress: remoteAddress, flags: flags, sendBufferSize: sendBufferSize, recvBufferSize: recvBufferSize)
+    public func connect(remoteAddress: IPAddress, sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
+        _socket.connect(remoteAddress: remoteAddress, sendBufferSize: sendBufferSize, recvBufferSize: recvBufferSize)
     }
 
     public func send(_ data: UnsafeRawBufferPointer) {
