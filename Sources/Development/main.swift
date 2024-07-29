@@ -3,14 +3,14 @@ import Foundation
 
 Thread.detachNewThread {
     var packets: [(data: [UInt8], address: IPAddress)] = []
-    let loop = EventLoop(allocator: FixedSizeAllocator(allocationSize: 1300))
+    let loop = EventLoop(allocator: FixedSizeAllocator(allocationSize: 2 * 64 * 1024))
     let serverSocket = UDPChannel(loop: loop) { bytes, remoteAddress in 
-        let text = String(bytes: bytes, encoding: .utf8)
+        //let text = String(bytes: bytes, encoding: .utf8)
         //print("Server received from:", remoteAddress)//, "data:", bytes, "text:", text ?? "")
         packets.append((bytes, remoteAddress))
     }
     let bindAddress = IPAddress.v4(.create(host: "0.0.0.0", port: 25566)!)
-    serverSocket.bind(address: bindAddress, sendBufferSize: 4 * 1024 * 1024, recvBufferSize: 4 * 1024 * 1024)
+    serverSocket.bind(address: bindAddress, flags: [.recvmmsg, .reuseaddr], sendBufferSize: 4 * 1024 * 1024, recvBufferSize: 4 * 1024 * 1024)
     var totalDataReceived = 0
     while true {
         loop.run(.once)
@@ -51,15 +51,16 @@ let socket = UDPConnectedChannel(loop: loop) { bytes, remoteAddress in
     totalDataReceived += bytes.count
 }
 socket.connect(remoteAddress: remoteAddress, sendBufferSize: 256 * 1024, recvBufferSize: 256 * 1024)
-
+print("?")
 for i in 0..<500 * 1024 {
-    if i % 1024 == 0 {
+    let bytes = (0..<1024).map { _ in UInt8.random(in: .min ... .max) }
+    socket.send(bytes)
+    if i % 10 == 0 {
         loop.run(.nowait)
         print(totalDataReceived)
     }
-    let bytes = (0..<1024).map { _ in UInt8.random(in: .min ... .max) }
-    socket.send(bytes)
 }
+loop.run(.nowait)
 
 while let line = readLine() {
     let bytes = [UInt8](line.utf8)

@@ -6,7 +6,6 @@ This is a package containing a copy of [libuv](https://github.com/libuv/libuv) v
 - [ ] Make ```bind``` and ```connect``` ```throwing``` for UDPChannels
 - [ ] ```AsyncUDPChannel```
 - [ ] ```AsyncUDPConnectedChannel```
-- [ ] Vectored reads for UDP channels; ```uv_udp_using_recvmmsg``` or along those lines and then take into account [UV_UDP_MMSG_CHUNK / UV_UDP_MMSG_FREE](https://docs.libuv.org/en/v1.x/udp.html#c.uv_udp_flags) in the recv_cb callback function 
 - [ ] ```TCPServerChannel```
 - [ ] ```TCPClientChannel```
 - [ ] ```AsyncTCPServerChannel```
