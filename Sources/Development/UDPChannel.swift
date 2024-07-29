@@ -192,11 +192,14 @@ public final class UDPChannel {
 
     private func _deallocateHandle() {
         if _handle == nil { return }
-        uv_udp_recv_stop(_handle)
-        _handle?.pointee.data.assumingMemoryBound(to: UDPChannelContext.self).deinitialize(count: 1)
-        _handle?.pointee.data.deallocate()
-        _handle?.deinitialize(count: 1)
-        _handle?.deallocate()
+        _handle?.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
+            uv_close(handle) { handle in
+                handle?.pointee.data.assumingMemoryBound(to: UDPChannelContext.self).deinitialize(count: 1)
+                handle?.pointee.data.deallocate()
+                handle?.deinitialize(count: 1)
+                handle?.deallocate()
+            }
+        }
         _handle = nil
     }
 
@@ -356,11 +359,14 @@ public final class UDPConnectedChannel {
 
     private func _deallocateHandle() {
         if _handle == nil { return }
-        uv_udp_recv_stop(_handle)
-        _handle?.pointee.data.assumingMemoryBound(to: UDPChannelContext.self).deinitialize(count: 1)
-        _handle?.pointee.data.deallocate()
-        _handle?.deinitialize(count: 1)
-        _handle?.deallocate()
+        _handle?.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
+            uv_close(handle) { handle in
+                handle?.pointee.data.assumingMemoryBound(to: UDPChannelContext.self).deinitialize(count: 1)
+                handle?.pointee.data.deallocate()
+                handle?.deinitialize(count: 1)
+                handle?.deallocate()
+            }
+        }
         _handle = nil
     }
 
@@ -404,17 +410,18 @@ internal final class UDPChannelSendRequestAllocator {
 
     @inline(__always)
     func deallocate(_ ptr: UnsafeMutablePointer<uv_udp_send_t>) {
+        ptr.deinitialize(count: 1)
         if cache.count < cacheSize { 
             cache.append(ptr)
         } else { 
-            ptr.deinitialize(count: 1)
             ptr.deallocate()
         }
     }
 
     deinit {
         while let ptr = cache.popLast() {
-            deallocate(ptr)
+            ptr.deinitialize(count: 1)
+            ptr.deallocate()
         }
     }
 }

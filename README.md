@@ -10,5 +10,6 @@ This is a package containing a copy of [libuv](https://github.com/libuv/libuv) v
 - [ ] ```TCPClientChannel```
 - [ ] ```AsyncTCPServerChannel```
 - [ ] ```AsyncTCPClientChannel```
+- [ ] Add "makeResolving(host: String, port: Int)" static methods for IPAddress (aka. DNS stuff etc.)
 - [ ] More advanced EventLoop APIs, e.g. ```MultiThreadedEventLoopGroup``` type of API similar to what's in [swift-nio](https://github.com/apple/swift-nio)
 - [ ] Migrate all of these abstractions to a separate package and keep this package only as a wrapper around ```libuv```
