@@ -4,7 +4,6 @@ This is a package containing a copy of [libuv](https://github.com/libuv/libuv) v
 
 # TODO
 - [ ] Make ```bind``` and ```connect``` ```throwing``` for UDPChannels
-- [ ] Make ```TCPClientChannel.connect()``` static
 - [ ] ```AsyncTCPServerChannel```
 - [ ] ```AsyncTCPClientChannel```
 - [ ] Add "makeResolving(host: String, port: Int)" static methods for IPAddress (aka. DNS stuff etc.)

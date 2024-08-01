@@ -1,75 +1,47 @@
 import SebbuCLibUV
-
-public struct UDPChannelFlags: OptionSet {
-    public let rawValue: UInt32
-
-    public init(rawValue: UInt32) {
-        self.rawValue = rawValue
-    }
-
-    /// Disables dual stack mode
-    public static let ipv6Only = UDPChannelFlags(rawValue: numericCast(UV_UDP_IPV6ONLY.rawValue))
-
-    public static let partial = UDPChannelFlags(rawValue: numericCast(UV_UDP_PARTIAL.rawValue))
-    public static let reuseaddr = UDPChannelFlags(rawValue: numericCast(UV_UDP_REUSEADDR.rawValue))
-    public static let mmsgChunk = UDPChannelFlags(rawValue: numericCast(UV_UDP_MMSG_CHUNK.rawValue))
-    public static let mmsgFree = UDPChannelFlags(rawValue: numericCast(UV_UDP_MMSG_FREE.rawValue))
-    public static let linuxRecvErr = UDPChannelFlags(rawValue: numericCast(UV_UDP_LINUX_RECVERR.rawValue))
-    public static let reuseport = UDPChannelFlags(rawValue: numericCast(UV_UDP_REUSEPORT.rawValue))
-    public static let recvmmsg = UDPChannelFlags(rawValue: numericCast(UV_UDP_RECVMMSG.rawValue))
-}
-
-public enum UDPChannelError: Error {
-    case channelAlreadyBound(reason: String)
-    case channelAlreadyConnected(reason: String)
-    case failedToInitializeHandle(reason: String)
-    case failedToBind(reason: String)
-    case failedToConnect(reason: String)
-    case failedToStartReceiving(reason: String)
-    case failedToSend(reason: String)
-}
+import DequeModule
 
 public final class UDPChannel {
     public let eventLoop: EventLoop
 
-    @usableFromInline
-    internal var _handle: UnsafeMutablePointer<uv_udp_t>?
-
-    @usableFromInline
-    internal var onReceive: (([UInt8], IPAddress) -> Void)?
-
-    public init(loop: EventLoop = .default, _ onReceive: @escaping (_ data: [UInt8], _ remoteAddress: IPAddress) -> Void) {
-        self.eventLoop = loop
-        self.onReceive = onReceive
+    public var isClosed: Bool {
+        handle.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { uv_is_closing($0) != 0 }
     }
 
-    internal init(loop: EventLoop = .default, _ onReceive: (([UInt8], IPAddress) -> Void)?) {
+    @usableFromInline
+    internal let handle: UnsafeMutablePointer<uv_udp_t>
+
+    @usableFromInline
+    internal let context: UnsafeMutablePointer<UDPChannelContext>
+
+    @usableFromInline
+    internal var packetQueue: Deque<UDPChannelPacket> = Deque()
+
+    public init(loop: EventLoop = .default) {
+        self.handle = .allocate(capacity: 1)
         self.eventLoop = loop
-        self.onReceive = onReceive
+        self.context = .allocate(capacity: 1)
+        context.initialize(to: .init(allocator: loop.allocator, onReceive: { [unowned(unsafe) self] data, address in
+            self.packetQueue.append(.init(address: address, data: data))
+        }))
+        handle.initialize(to: .init())
+        handle.pointee.data = UnsafeMutableRawPointer(context)
     }
 
     //TODO: Throw errors!
     //Note: For game servers the following are good values: sendBufferSize = 4 * 1024 * 1024, recvBufferSize = 4 * 1024 * 1024
     //Note: For game clients the following are good values: sendBufferSize = 256 * 1024, recvBufferSize = 256 * 1024
     public func bind(address: IPAddress, flags: UDPChannelFlags = [], sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
-        guard _handle == nil else { 
-            fatalError("Handle was not nil")
-        }
-        // Allocate and initialize the udp handle
-        _handle = .allocate(capacity: 1)
-        _handle?.initialize(to: .init())
-
         let domain = 0 //AF_UNSPEC
         let extraFlags = flags.contains(.recvmmsg) ? UDPChannelFlags.recvmmsg.rawValue & ~0xFF : 0
-        var result = uv_udp_init_ex(eventLoop._handle, _handle, UInt32(domain) | extraFlags)
-        if result != 0 {
-            print("Failed to initialize udp handle with error:", mapError(result))
-        }
+        var result = uv_udp_init_ex(eventLoop._handle, handle, UInt32(domain) | extraFlags)
+        precondition(result == 0, "Failed to initialize udp handle")
+        
         // Bind the handle
         var reducedFlags = flags
         reducedFlags.remove(.recvmmsg)
         result = address.withSocketHandle { address in
-            uv_udp_bind(_handle, address, reducedFlags.rawValue)
+            uv_udp_bind(handle, address, reducedFlags.rawValue)
         }
 
         if result != 0 { 
@@ -78,7 +50,7 @@ public final class UDPChannel {
         }
 
         // Send and receive buffer sizes
-        _handle?.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
+        handle.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
             if let sendBufferSize, sendBufferSize > 0 {
                 var value: Int32 = numericCast(sendBufferSize)
                 let result = uv_send_buffer_size(handle, &value)
@@ -96,14 +68,9 @@ public final class UDPChannel {
                 }
             }
         }
-        
-        // Set up the context for the udp allocate and recv callbacks
-        let context = UnsafeMutablePointer<UDPChannelContext>.allocate(capacity: 1)
-        context.initialize(to: .init(allocator: eventLoop.allocator, onReceive: onReceive))
-        let contextPtr = UnsafeMutableRawPointer(context)
-        _handle?.pointee.data = contextPtr
+
         // Start receiving data
-        result = uv_udp_recv_start(_handle) { _handle, suggestedSize, buffer in
+        result = uv_udp_recv_start(handle) { _handle, suggestedSize, buffer in
             guard let contextPtr = _handle?.pointee.data.assumingMemoryBound(to: UDPChannelContext.self) else { return }
             let (allocatedSize, allocation) = contextPtr.pointee.allocator.allocate(numericCast(suggestedSize))
             let base = UnsafeMutableRawPointer(allocation)
@@ -140,7 +107,8 @@ public final class UDPChannel {
             }
             let bytes = UnsafeRawBufferPointer(start: .init(buffer.pointee.base), count: numericCast(nRead))
             let bytesArray = [UInt8](bytes)
-            contextPtr.pointee.onReceive?(bytesArray, remoteAddress)
+            let onReceive = contextPtr.pointee.onReceiveForAsync ?? contextPtr.pointee.onReceive
+            onReceive(bytesArray, remoteAddress)
         }
         if result != 0 {
             print("Couldn't start receiving data with error:", mapError(result))
@@ -149,18 +117,15 @@ public final class UDPChannel {
     }
 
     public func send(_ data: UnsafeRawBufferPointer, to: IPAddress) {
-        guard let _handle else {
-            preconditionFailure("Tried to send data on a UDPChannel that hasn't been bound")
-        }
         if data.isEmpty { return }
-        to.withSocketHandle { addr in
+        let result = to.withSocketHandle { addr in
             let buffer = UnsafeMutableBufferPointer(mutating: data.bindMemory(to: Int8.self))
             var buf = uv_buf_init(buffer.baseAddress, numericCast(data.count))
-            let contextPtr = _handle.pointee.data.assumingMemoryBound(to: UDPChannelContext.self)
-            let sendRequest = contextPtr.pointee.sendRequestAllocator.allocate()
+            let sendRequest = context.pointee.sendRequestAllocator.allocate()
             sendRequest.initialize(to: .init())
-            sendRequest.pointee.data = _handle.pointee.data
-            uv_udp_send(sendRequest, _handle, &buf, 1, addr) { sendRequest, status in
+            sendRequest.pointee.data = handle.pointee.data
+            if uv_udp_try_send(handle, &buf, 1, addr) >= 0 { return 0 }
+            return numericCast(uv_udp_send(sendRequest, handle, &buf, 1, addr) { sendRequest, status in
                 if status != 0 {
                     print("Error when sending datagram:", mapError(status))
                     return
@@ -168,7 +133,10 @@ public final class UDPChannel {
                 guard let sendRequest else { return }
                 let contextPtr = sendRequest.pointee.data.assumingMemoryBound(to: UDPChannelContext.self)
                 contextPtr.pointee.sendRequestAllocator.deallocate(sendRequest)
-            }
+            })
+        }
+        if result != 0 {
+            print("Failed to enqueue datagram send with error:", mapError(result))
         }
     }   
 
@@ -184,76 +152,93 @@ public final class UDPChannel {
         }
     }
 
-    public func close() {
-        if _handle == nil { return }
-        uv_udp_recv_stop(_handle)
-        _deallocateHandle()
+    @inline(__always)
+    public func receive() -> UDPChannelPacket? { packetQueue.popFirst() }
+
+    internal func onReceiveForAsync(_ onReceiveForAsync: (([UInt8], IPAddress) -> Void)?) {
+        assert(!isClosed)
+        context.pointee.onReceiveForAsync = onReceiveForAsync
     }
 
-    private func _deallocateHandle() {
-        if _handle == nil { return }
-        _handle?.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
-            uv_close(handle) { handle in
-                handle?.pointee.data.assumingMemoryBound(to: UDPChannelContext.self).deinitialize(count: 1)
-                handle?.pointee.data.deallocate()
-                handle?.deinitialize(count: 1)
-                handle?.deallocate()
+    public func onClose(_ onClose: (() -> Void)?) {
+        assert(!isClosed)
+        context.pointee.onClose = onClose
+    }
+
+    public func close() {
+        close(deallocating: false)
+    }
+
+    internal func close(deallocating: Bool) {
+        handle.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
+            switch (isClosed, deallocating) {
+                case (true, true):
+                    handle.deallocate()
+                case (true, false):
+                    break
+                case (false, true):
+                    uv_close(handle) { $0?.deallocate() }
+                case (false, false):
+                    uv_close(handle) { _ in }
             }
         }
-        _handle = nil
+        context.pointee.triggerOnClose()
+        if deallocating {
+            context.deinitialize(count: 1)
+            context.deallocate()
+        }
     }
 
     deinit {
-        // Close the socket if not already closed
-        close()
+        close(deallocating: true)
     }
 }
 
-/// A connected UDPChannnel
+/// A connected UDPChannel
 public final class UDPConnectedChannel {
     public let eventLoop: EventLoop
 
-    @usableFromInline
-    internal var _handle: UnsafeMutablePointer<uv_udp_t>?
-
-    @usableFromInline
-    internal var onReceive: (([UInt8], IPAddress) -> Void)?
-
-    public init(loop: EventLoop = .default, _ onReceive: @escaping (_ data: [UInt8], _ remoteAddress: IPAddress) -> Void) {
-        self.eventLoop = loop
-        self.onReceive = onReceive
+    public var isClosed: Bool {
+        handle.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { uv_is_closing($0) != 0 }
     }
 
-    internal init(loop: EventLoop = .default, _ onReceive: (([UInt8], IPAddress) -> Void)?) {
+    @usableFromInline
+    internal let handle: UnsafeMutablePointer<uv_udp_t>
+
+    @usableFromInline
+    internal let context: UnsafeMutablePointer<UDPChannelContext>
+
+    @usableFromInline
+    internal var packetQueue: Deque<UDPChannelPacket> = Deque()
+
+    public init(loop: EventLoop = .default) {
+        self.handle = .allocate(capacity: 1)
         self.eventLoop = loop
-        self.onReceive = onReceive
+        self.context = .allocate(capacity: 1)
+        context.initialize(to: .init(allocator: eventLoop.allocator, onReceive: { [unowned(unsafe) self] data, address in 
+            self.packetQueue.append(.init(address: address, data: data))
+        }))
+        let error = uv_udp_init(eventLoop._handle, handle)
+        precondition(error == 0, "Failed to initialize udp handle")
+        handle.pointee.data = UnsafeMutableRawPointer(context)
     }
 
     //TODO: Throw errors!
     //Note: For game servers the following are good values: sendBufferSize = 4 * 1024 * 1024, recvBufferSize = 4 * 1024 * 1024
     //Note: For game clients the following are good values: sendBufferSize = 256 * 1024, recvBufferSize = 256 * 1024
     public func connect(remoteAddress: IPAddress, sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
-        guard _handle == nil else { 
-            fatalError("Handle was not nil")
-        }
-        // Allocate and initialize the udp handle
-        _handle = .allocate(capacity: 1)
-        _handle!.initialize(to: .init())
-        var result = uv_udp_init(eventLoop._handle, _handle)
-        if result != 0 {
-            print("Failed to initialize udp handle with error:", mapError(result))
-            return
-        }
         // Connect to the remote address
-        result = remoteAddress.withSocketHandle { address in 
-            uv_udp_connect(_handle, address)
+        var result = remoteAddress.withSocketHandle { address in 
+            uv_udp_connect(handle, address)
         }
+
         if result != 0 {
             print("Failed to connect the udp handle to the remote address with error:", mapError(result))
             return
         }
+
         // Send and receive buffer sizes
-        _handle!.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
+        handle.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
             if let sendBufferSize, sendBufferSize > 0 {
                 var value: Int32 = numericCast(sendBufferSize)
                 let result = uv_send_buffer_size(handle, &value)
@@ -271,14 +256,9 @@ public final class UDPConnectedChannel {
                 }
             }
         }
-        
-        // Set up the context for the udp allocate and recv callbacks
-        let context = UnsafeMutablePointer<UDPChannelContext>.allocate(capacity: 1)
-        context.initialize(to: .init(allocator: eventLoop.allocator, onReceive: onReceive))
-        let contextPtr = UnsafeMutableRawPointer(context)
-        _handle?.pointee.data = contextPtr
+
         // Start receiving data
-        result = uv_udp_recv_start(_handle) { _handle, suggestedSize, buffer in
+        result = uv_udp_recv_start(handle) { _handle, suggestedSize, buffer in
             guard let contextPtr = _handle?.pointee.data.assumingMemoryBound(to: UDPChannelContext.self) else { return }
             let (allocatedSize, allocation) = contextPtr.pointee.allocator.allocate(numericCast(suggestedSize))
             let base = UnsafeMutableRawPointer(allocation)
@@ -308,27 +288,24 @@ public final class UDPConnectedChannel {
             
             let bytes = UnsafeRawBufferPointer(start: .init(buffer.pointee.base), count: numericCast(nRead))
             let bytesArray = [UInt8](bytes)
-            contextPtr.pointee.onReceive?(bytesArray, remoteAddress)
+            let onReceive = contextPtr.pointee.onReceiveForAsync ?? contextPtr.pointee.onReceive
+            onReceive(bytesArray, remoteAddress)
         }
         if result != 0 {
             print("Couldn't start receiving data with error:", mapError(result))
             return
         }
-        print(uv_udp_using_recvmmsg(_handle))
     }
 
     public func send(_ data: UnsafeRawBufferPointer) {
-        guard let _handle else {
-            preconditionFailure("Tried to send data on a UDPConnnectedChannel that hasn't been bound")
-        }
         if data.isEmpty { return }
         let buffer = UnsafeMutableBufferPointer(mutating: data.bindMemory(to: Int8.self))
         var buf = uv_buf_init(buffer.baseAddress, numericCast(data.count))
-        let contextPtr = _handle.pointee.data.assumingMemoryBound(to: UDPChannelContext.self)
-        let sendRequest = contextPtr.pointee.sendRequestAllocator.allocate()
+        let sendRequest = context.pointee.sendRequestAllocator.allocate()
         sendRequest.initialize(to: .init())
-        sendRequest.pointee.data = _handle.pointee.data
-        uv_udp_send(sendRequest, _handle, &buf, 1, nil) { sendRequest, status in
+        sendRequest.pointee.data = handle.pointee.data
+        if uv_udp_try_send(handle, &buf, 1, nil) >= 0 { return }
+        let result = uv_udp_send(sendRequest, handle, &buf, 1, nil) { sendRequest, status in
             if status != 0 {
                 print("Error when sending datagram:", mapError(status))
                 return
@@ -336,6 +313,9 @@ public final class UDPConnectedChannel {
             guard let sendRequest else { return }
             let contextPtr = sendRequest.pointee.data.assumingMemoryBound(to: UDPChannelContext.self)
             contextPtr.pointee.sendRequestAllocator.deallocate(sendRequest)
+        }
+        if result != 0 {
+            print("Failed to enqueue datagram send with error:", mapError(result))
         }
     }   
 
@@ -351,77 +331,45 @@ public final class UDPConnectedChannel {
         }
     }
 
-    public func close() {
-        if _handle == nil { return }
-        uv_udp_recv_stop(_handle)
-        _deallocateHandle()
+    @inline(__always)
+    public func receive() -> UDPChannelPacket? { packetQueue.popFirst() }
+
+    internal func onReceiveForAsync(_ onReceiveForAsync: (([UInt8], IPAddress) -> Void)?) {
+        assert(!isClosed)
+        context.pointee.onReceiveForAsync = onReceiveForAsync
     }
 
-    private func _deallocateHandle() {
-        if _handle == nil { return }
-        _handle?.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
-            uv_close(handle) { handle in
-                handle?.pointee.data.assumingMemoryBound(to: UDPChannelContext.self).deinitialize(count: 1)
-                handle?.pointee.data.deallocate()
-                handle?.deinitialize(count: 1)
-                handle?.deallocate()
+    public func onClose(_ onClose: (() -> Void)?) {
+        assert(!isClosed)
+        context.pointee.onClose = onClose
+    }
+
+    public func close() {
+        close(deallocating: false)
+    }
+
+    internal func close(deallocating: Bool) {
+        handle.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
+            switch (isClosed, deallocating) {
+                case (true, true):
+                    handle.deallocate()
+                case (true, false):
+                    break
+                case (false, true):
+                    uv_close(handle) { $0?.deallocate() }
+                case (false, false):
+                    uv_close(handle) { _ in }
             }
         }
-        _handle = nil
-    }
-
-    deinit {
-        // Close the socket if not already closed
-        close()
-    }
-}
-
-@usableFromInline
-internal struct UDPChannelContext {
-    @usableFromInline
-    internal let allocator: Allocator
-
-    @usableFromInline
-    internal let onReceive: (([UInt8], IPAddress) -> Void)?
-
-    @usableFromInline
-    internal let sendRequestAllocator: UDPChannelSendRequestAllocator = .init()
-}
-
-@usableFromInline
-internal final class UDPChannelSendRequestAllocator {
-    @usableFromInline
-    internal var cache: [UnsafeMutablePointer<uv_udp_send_t>]
-
-    @usableFromInline
-    internal let cacheSize: Int
-
-    init(cacheSize: Int = 256) {
-        self.cache = []
-        self.cacheSize = cacheSize
-        self.cache.reserveCapacity(cacheSize)
-    }
-
-    @inline(__always)
-    func allocate() -> UnsafeMutablePointer<uv_udp_send_t> {
-        if let ptr = cache.popLast() { return ptr }
-        return .allocate(capacity: 1)
-    }
-
-    @inline(__always)
-    func deallocate(_ ptr: UnsafeMutablePointer<uv_udp_send_t>) {
-        ptr.deinitialize(count: 1)
-        if cache.count < cacheSize { 
-            cache.append(ptr)
-        } else { 
-            ptr.deallocate()
+        context.pointee.triggerOnClose()
+        if deallocating {
+            context.deinitialize(count: 1)
+            context.deallocate()
         }
     }
 
     deinit {
-        while let ptr = cache.popLast() {
-            ptr.deinitialize(count: 1)
-            ptr.deallocate()
-        }
+        close(deallocating: true)
     }
 }
+
