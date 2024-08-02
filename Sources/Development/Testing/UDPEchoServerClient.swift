@@ -1,4 +1,5 @@
 import Foundation
+import SebbuLibUV
 
 func testUDPEchoServerClient() {
     let loop = EventLoop(allocator: FixedSizeAllocator(allocationSize: 250))

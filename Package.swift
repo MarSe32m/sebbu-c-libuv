@@ -87,18 +87,15 @@ let package = Package(
     name: "sebbu-c-libuv",
     platforms: [.macOS(.v11), .iOS(.v14)],
     products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
             name: "SebbuCLibUV",
             targets: ["SebbuCLibUV"]),
+        .library(name: "SebbuLibUV", targets: ["SebbuLibUV"])
     ],
     dependencies: [.package(url: "https://github.com/apple/swift-collections.git", from: "1.1.2")],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
         .target(
             name: "SebbuCLibUV",
-            dependencies: [.product(name: "DequeModule", package: "swift-collections")],
             sources: sources,
             cSettings: [
             //.unsafeFlags(["-Wno-implicit-function-declaration", "-Wno-deprecated-declarations"]),
@@ -129,9 +126,14 @@ let package = Package(
                     .linkedLibrary("rt", .when(platforms: [.linux]))
                 ]
         ),
+        .target(
+            name: "SebbuLibUV", 
+            dependencies: ["SebbuCLibUV",
+                            .product(name: "DequeModule", package: "swift-collections")]
+        ),
         .executableTarget(
             name: "Development",
-            dependencies: ["SebbuCLibUV"]
+            dependencies: ["SebbuLibUV"]
         )
     ]
 )

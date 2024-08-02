@@ -45,8 +45,8 @@ public final class TCPClientChannel {
         handle.pointee.data = .init(context)
     }
 
-    public func connect(remoteAddress: IPAddress, nodelay: Bool = true, sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
-        var result = uv_tcp_keepalive(handle, 1, 60)
+    public func connect(remoteAddress: IPAddress, nodelay: Bool = true, keepAlive: Int = 60, sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
+        var result = uv_tcp_keepalive(handle, 1, numericCast(keepAlive))
         if result != 0 {
             print("Failed to set keep alive with error:", mapError(result))
             return
@@ -111,6 +111,7 @@ public final class TCPClientChannel {
 
     public func send(_ data: UnsafeRawBufferPointer) {
         let result: Int32 = data.withMemoryRebound(to: Int8.self) { buffer in 
+            //FIXME: The data needs to be valid until the callback is called!
             var buf = uv_buf_init(UnsafeMutablePointer(mutating: buffer.baseAddress), numericCast(buffer.count))
             let writeRequest = context.pointee.writeRequestAllocator.allocate()
             writeRequest.initialize(to: .init())
@@ -283,11 +284,11 @@ public final class TCPServerChannel {
     @usableFromInline
     internal var clients: Deque<TCPClientChannel> = Deque()
 
-    public init(loop: EventLoop = .default, clientLoops: [EventLoop] = [.default]) {
+    public init(loop: EventLoop = .default) {
         self.handle = .allocate(capacity: 1)
         self.eventLoop = loop
         self.context = .allocate(capacity: 1)
-        context.initialize(to: .init(loops: clientLoops.isEmpty ? [loop] : clientLoops, onConnection: {[unowned(unsafe) self] client in 
+        context.initialize(to: .init(loop: loop, onConnection: {[unowned(unsafe) self] client in 
             self.clients.append(client)
         }))
         let error = uv_tcp_init(eventLoop._handle, handle)
@@ -324,32 +325,30 @@ public final class TCPServerChannel {
 
                 let contextPtr = serverStream.pointee.data.assumingMemoryBound(to: TCPServerChannelContext.self)
 
-                let loop = contextPtr.pointee.loops.randomElement()!
-                loop.execute {
-                    let tcpHandle = UnsafeMutablePointer<uv_tcp_t>.allocate(capacity: 1)
-                    uv_tcp_init(loop._handle, tcpHandle)
-                    var result = uv_tcp_keepalive(tcpHandle, 1, 60)
-                    if result != 0 {
-                        print("Failed to set keep alive with error:", mapError(result))
-                    }
-                    result = uv_tcp_nodelay(tcpHandle, 1)
-                    if result != 0 {
-                        print("Failed to set tcp nodelay with error:", mapError(result))
-                    }
-                    result = tcpHandle.withMemoryRebound(to: uv_stream_t.self, capacity: 1) { clientStream in 
-                        uv_accept(serverStream, clientStream)
-                    }
-                    if result == 0 {
-                        let client = TCPClientChannel(loop: contextPtr.pointee.loops.randomElement()!, handle: tcpHandle)
-                        let onConnection = contextPtr.pointee.asyncOnConnection ?? contextPtr.pointee.onConnection
-                        onConnection(client)
-                        client.setupReceive()
-                    } else {
-                        print("Failed to accept connection with error:", result)
-                        tcpHandle.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
-                            uv_close(handle) { handle in
-                                handle?.deallocate()
-                            }
+                let loop = contextPtr.pointee.loop
+                let tcpHandle = UnsafeMutablePointer<uv_tcp_t>.allocate(capacity: 1)
+                uv_tcp_init(loop._handle, tcpHandle)
+                var result = uv_tcp_keepalive(tcpHandle, 1, 60)
+                if result != 0 {
+                    print("Failed to set keep alive with error:", mapError(result))
+                }
+                result = uv_tcp_nodelay(tcpHandle, 1)
+                if result != 0 {
+                    print("Failed to set tcp nodelay with error:", mapError(result))
+                }
+                result = tcpHandle.withMemoryRebound(to: uv_stream_t.self, capacity: 1) { clientStream in 
+                    uv_accept(serverStream, clientStream)
+                }
+                if result == 0 {
+                    let client = TCPClientChannel(loop: loop, handle: tcpHandle)
+                    let onConnection = contextPtr.pointee.asyncOnConnection ?? contextPtr.pointee.onConnection
+                    onConnection(client)
+                    client.setupReceive()
+                } else {
+                    print("Failed to accept connection with error:", result)
+                    tcpHandle.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
+                        uv_close(handle) { handle in
+                            handle?.deallocate()
                         }
                     }
                 }

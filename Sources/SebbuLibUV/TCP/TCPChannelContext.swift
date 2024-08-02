@@ -35,7 +35,7 @@ internal struct TCPClientChannelContext {
 @usableFromInline
 internal struct TCPServerChannelContext {
     @usableFromInline
-    internal let loops: [EventLoop]
+    internal let loop: EventLoop
 
     @usableFromInline
     internal let onConnection: ((TCPClientChannel) -> Void)

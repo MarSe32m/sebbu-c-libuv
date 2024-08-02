@@ -1,4 +1,4 @@
-import SebbuCLibUV
+import SebbuLibUV
 import Foundation
 
 func testTCPEchoServerClient() {
@@ -9,8 +9,7 @@ func testTCPEchoServerClient() {
     let remoteAddress = IPAddress.v4(remoteIP)
 
     var clients: [TCPClientChannel] = []
-    let clientLoops = (0..<10).map { _ in EventLoop() }
-    let server = TCPServerChannel(loop: loop, clientLoops: clientLoops)
+    let server = TCPServerChannel(loop: loop)
     server.bind(address: bindAddress)
     print(server.state)
     server.listen()
@@ -22,7 +21,6 @@ func testTCPEchoServerClient() {
     
     while let _client = client {
         loop.run(.nowait)
-        clientLoops.forEach { $0.run(.nowait) }
         while let client = server.receive() {
             clients.append(client)
         }

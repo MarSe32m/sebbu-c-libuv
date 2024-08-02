@@ -32,16 +32,19 @@ public final class UDPChannel {
     //Note: For game servers the following are good values: sendBufferSize = 4 * 1024 * 1024, recvBufferSize = 4 * 1024 * 1024
     //Note: For game clients the following are good values: sendBufferSize = 256 * 1024, recvBufferSize = 256 * 1024
     public func bind(address: IPAddress, flags: UDPChannelFlags = [], sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
+        var flags = flags
+        #if os(Windows)
+        flags.remove(.reuseport)
+        #endif
         let domain = 0 //AF_UNSPEC
         let extraFlags = flags.contains(.recvmmsg) ? UDPChannelFlags.recvmmsg.rawValue & ~0xFF : 0
         var result = uv_udp_init_ex(eventLoop._handle, handle, UInt32(domain) | extraFlags)
         precondition(result == 0, "Failed to initialize udp handle")
         
         // Bind the handle
-        var reducedFlags = flags
-        reducedFlags.remove(.recvmmsg)
+        flags.remove(.recvmmsg)
         result = address.withSocketHandle { address in
-            uv_udp_bind(handle, address, reducedFlags.rawValue)
+            uv_udp_bind(handle, address, flags.rawValue)
         }
 
         if result != 0 { 
@@ -118,6 +121,7 @@ public final class UDPChannel {
 
     public func send(_ data: UnsafeRawBufferPointer, to: IPAddress) {
         if data.isEmpty { return }
+        //FIXME: The data needs to be valid until the callback is called!
         let result = to.withSocketHandle { addr in
             let buffer = UnsafeMutableBufferPointer(mutating: data.bindMemory(to: Int8.self))
             var buf = uv_buf_init(buffer.baseAddress, numericCast(data.count))
@@ -299,6 +303,7 @@ public final class UDPConnectedChannel {
 
     public func send(_ data: UnsafeRawBufferPointer) {
         if data.isEmpty { return }
+        //FIXME: The data needs to be valid until the callback is called!
         let buffer = UnsafeMutableBufferPointer(mutating: data.bindMemory(to: Int8.self))
         var buf = uv_buf_init(buffer.baseAddress, numericCast(data.count))
         let sendRequest = context.pointee.sendRequestAllocator.allocate()

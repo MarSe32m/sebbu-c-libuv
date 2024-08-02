@@ -37,7 +37,7 @@ public final class EventLoop {
     internal var _thread: uv_thread_t?
 
     public var inEventLoop: Bool {
-        if _thread == nil { return true }
+        guard let _thread else { return true }
         let currentThread = uv_thread_self()
         return withUnsafePointer(to: currentThread) { currentPtr in 
             return withUnsafePointer(to: _thread) { threadPtr in 
