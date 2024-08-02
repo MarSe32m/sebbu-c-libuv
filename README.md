@@ -4,6 +4,8 @@ This is a package containing a copy of [libuv](https://github.com/libuv/libuv) v
 
 # TODO
 - [ ] Make ```bind``` and ```connect``` ```throwing``` for UDPChannels
+- [ ] Make ```bind``` and ```listen``` ```throwing``` for TCPServerChannel
+- [ ] Make ```connect``` ```throwing``` for TCPClientChannel
 - [ ] Consider how ```AsyncUDPChannel``` could be implemented
 - [ ] Consider how ```AsyncUDPConnectedChannel``` could be implemented
 - [ ] Consider how ```AsyncTCPServerChannel``` could be implemented
