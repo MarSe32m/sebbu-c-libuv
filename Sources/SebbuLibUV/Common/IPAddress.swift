@@ -97,6 +97,39 @@ public enum IPAddress: CustomStringConvertible {
         return "\(ip):\(port)"
     }
 
+    //TODO: Make version with callback
+    public static func createResolving(loop: EventLoop, host: String, port: Int) -> IPAddress? {
+        let req = UnsafeMutablePointer<uv_getaddrinfo_t>.allocate(capacity: 1)
+        req.initialize(to: .init())
+        defer { 
+            req.deinitialize(count: 1)
+            req.deallocate()
+        }
+        let result = uv_getaddrinfo(loop._handle, req, nil, host, String(port), nil)
+        if result != 0 {
+            print("Failed to retrieve addrinfo")
+            return nil
+        }
+        let info = req.pointee.addrinfo
+        defer { 
+            if info != nil {
+                uv_freeaddrinfo(info)
+            }
+        }
+        if let info = info, let addrPointer = info.pointee.ai_addr {
+            let addressBytes = UnsafeRawPointer(addrPointer)
+            switch info.pointee.ai_family {
+                case AF_INET:
+                    return .v4(.init(address: addressBytes.load(as: sockaddr_in.self)))
+                case AF_INET6:
+                    return .v6(.init(address: addressBytes.load(as: sockaddr_in6.self)))
+                default:
+                    return nil
+            }
+        }
+        return nil
+    }
+
     internal func withSocketHandle<T>(_ body: (UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
         switch self {
             case .v4(let ipv4):

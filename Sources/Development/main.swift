@@ -1,3 +1,3 @@
-//await testAsyncTCPEchoServerClient()
+testGetAddrInfo()
 testTCPEchoServerClient()
 //testUDPEchoServerClient()
