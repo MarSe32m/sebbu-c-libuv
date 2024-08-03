@@ -1,7 +1,7 @@
 import SebbuCLibUV
 import DequeModule
 
-public final class TCPClientChannel {
+public final class TCPClientChannel: EventLoopBound {
     public let eventLoop: EventLoop
 
     public var isClosed: Bool {
@@ -45,16 +45,20 @@ public final class TCPClientChannel {
         handle.pointee.data = .init(context)
     }
 
-    public func connect(remoteAddress: IPAddress, nodelay: Bool = true, keepAlive: Int = 60, sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
+    public func connect(remoteAddress: IPAddress, nodelay: Bool = true, keepAlive: Int = 60, sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) throws {
         var result = uv_tcp_keepalive(handle, 1, numericCast(keepAlive))
         if result != 0 {
-            print("Failed to set keep alive with error:", mapError(result))
-            return
+            debugOnly {
+                print("Failed to set keep alive with error:", mapError(result))
+            }
+            throw TCPClientChannelError.failedToSetKeepalive(reason: mapError(result), errorNumber: numericCast(result))
         }
         result = uv_tcp_nodelay(handle, nodelay ? 1 : 0)
         if result != 0 {
-            print("Failed to set tcp nodelay with error:", mapError(result))
-            return
+            debugOnly {
+                print("Failed to set tcp nodelay with error:", mapError(result))
+            }
+            throw TCPClientChannelError.failedToSetNodelay(reason: mapError(result), errorNumber: numericCast(result))
         }
 
         // Send and receive buffer sizes
@@ -63,16 +67,14 @@ public final class TCPClientChannel {
                 var value: Int32 = numericCast(sendBufferSize)
                 let result = uv_send_buffer_size(handle, &value)
                 if result != 0 {
-                    let errorString = String(cString: uv_strerror(result))
-                    print("Failed to set send buffer size to", sendBufferSize, "with error:", errorString)
+                    print("Failed to set send buffer size to", sendBufferSize, "with error:", mapError(result))
                 }
             }
             if let recvBufferSize, recvBufferSize > 0 {
                 var value: Int32 = numericCast(recvBufferSize)
                 let result = uv_recv_buffer_size(handle, &value)
                 if result != 0 {
-                    let errorString = String(cString: uv_strerror(result)) 
-                    print("Failed to set receive buffer size to", recvBufferSize, "with error:", errorString)
+                    print("Failed to set receive buffer size to", recvBufferSize, "with error:", mapError(result))
                 }
             }
         }
@@ -95,7 +97,7 @@ public final class TCPClientChannel {
 
                 if status != 0 {
                     print("Failed to connect to remote with error:", mapError(status))
-                    context.pointee.asyncOnConnect?(.failure(TCPClientChannelError.connectionFailure(numericCast(status), mapError(status))))
+                    context.pointee.asyncOnConnect?(.failure(TCPClientChannelError.connectionFailure(reason: mapError(status), errorNumber: numericCast(status))))
                     return
                 }
                 context.pointee.state = .connected
@@ -104,42 +106,76 @@ public final class TCPClientChannel {
             }
         }
         if result != 0 {
-            print("Failed to connect the tcp socket with error", mapError(result))
-            return
+            debugOnly {
+                print("Failed to connect the tcp socket with error", mapError(result))
+            }
+            throw TCPClientChannelError.connectionFailure(reason: mapError(result), errorNumber: numericCast(result))
         }
     }
 
-    public func send(_ data: UnsafeRawBufferPointer) {
-        let result: Int32 = data.withMemoryRebound(to: Int8.self) { buffer in 
-            //FIXME: The data needs to be valid until the callback is called!
+    @inline(__always)
+    internal func _trySend(_ buf: UnsafeMutablePointer<uv_buf_t>) -> Int {
+        return handle.withMemoryRebound(to: uv_stream_t.self, capacity: 1) { stream in 
+            var bytesSent = 0
+            while buf.pointee.len > 0 {
+                let bytes = uv_try_write(stream, buf, 1)
+                if bytes < 0 { break }
+                bytesSent += Int(bytes)
+                buf.pointee.base += numericCast(bytes)
+                buf.pointee.len -= numericCast(bytes)
+            }
+            return bytesSent
+        }
+    }
+
+    public func trySend(_ data: UnsafeRawBufferPointer) -> Int {
+        data.withMemoryRebound(to: Int8.self) { buffer in 
             var buf = uv_buf_init(UnsafeMutablePointer(mutating: buffer.baseAddress), numericCast(buffer.count))
-            let writeRequest = context.pointee.writeRequestAllocator.allocate()
-            writeRequest.initialize(to: .init())
-            writeRequest.pointee.data = handle.pointee.data
+            return _trySend(&buf)
+        }
+    }
+
+    @inline(__always)
+    public func trySend(_ data: UnsafeBufferPointer<UInt8>) -> Int {
+        trySend(UnsafeRawBufferPointer(data))
+    }
+
+    @inline(__always)
+    public func trySend(_ data: [UInt8]) -> Int {
+        data.withUnsafeBytes { buffer in 
+            trySend(buffer)
+        }
+    }
+
+    public func send(_ data: UnsafeRawBufferPointer) throws {
+        let result: Int32 = data.withMemoryRebound(to: Int8.self) { buffer in 
             return handle.withMemoryRebound(to: uv_stream_t.self, capacity: 1) { stream in 
-                while true {
-                    let bytes = uv_try_write(stream, &buf, 1)
-                    if bytes < 0 { break }
-                    let diff: Int = Int(buf.len) - Int(bytes)
-                    if diff == 0 { 
-                        return 0
-                    }
-                    buf.base += diff
-                    buf.len = numericCast(diff)
-                }
+                var buf = uv_buf_init(UnsafeMutablePointer(mutating: buffer.baseAddress), numericCast(buffer.count))
+                // _trySend modifies the buf.base pointer and buf.len
+                if _trySend(&buf) == data.count { return 0 }
+                
+                let writeRequestData = context.pointee.writeRequestDataAllocator.allocate(context: context, dataCount: numericCast(buf.len))
+                let mutableData = UnsafeMutableRawPointer(writeRequestData.pointee.data.baseAddress)
+                mutableData?.copyMemory(from: .init(buf.base), byteCount: numericCast(buf.len))
+                buf.base = writeRequestData.pointee.data.baseAddress
+
+                let writeRequest = context.pointee.writeRequestAllocator.allocate()
+                writeRequest.initialize(to: .init())
+                writeRequest.pointee.data = UnsafeMutableRawPointer(writeRequestData)
                 return uv_write(writeRequest, stream, &buf, 1) { writeRequest, status in
                     guard let writeRequest else {
                         fatalError("Failed to retrieve write request!")
                     }
+                    let writeRequestData = writeRequest.pointee.data.assumingMemoryBound(to: TCPClientWriteRequestData.self)
+                    let contextPtr = writeRequestData.pointee.context
                     defer {
-                        let contextPtr = writeRequest.pointee.data.assumingMemoryBound(to: TCPClientChannelContext.self)
                         contextPtr.pointee.writeRequestAllocator.deallocate(writeRequest)
+                        contextPtr.pointee.writeRequestDataAllocator.deallocate(writeRequestData)
                     }
                     if status != 0 {
                         print("Failed to write with error:", mapError(status), status)
                         writeRequest.pointee.handle.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
-                            let context = writeRequest.pointee.data.assumingMemoryBound(to: TCPClientChannelContext.self)
-                            context.pointee.triggerOnClose()
+                            contextPtr.pointee.triggerOnClose()
                             if uv_is_closing(handle) != 0 { return }
                             uv_close(handle) { _ in }
                         }
@@ -149,20 +185,22 @@ public final class TCPClientChannel {
             }
         }
         if result != 0 {
-            print("Failed to enqueue write with error:", mapError(result), result)
-            //TODO: Throw error!
+            debugOnly {
+                print("Failed to enqueue write with error:", mapError(result), result)
+            }
+            throw TCPClientChannelError.failedToSend(reason: mapError(result), errorNumber: numericCast(result))
         }
     }
 
     @inline(__always)
-    public func send(_ data: UnsafeBufferPointer<UInt8>) {
-        send(UnsafeRawBufferPointer(data))
+    public func send(_ data: UnsafeBufferPointer<UInt8>) throws {
+        try send(UnsafeRawBufferPointer(data))
     }
 
     @inline(__always)
-    public func send(_ data: [UInt8]) {
-        data.withUnsafeBytes { buffer in
-            send(buffer)
+    public func send(_ data: [UInt8]) throws {
+        try data.withUnsafeBytes { buffer in
+            try send(buffer)
         }
     }
 
@@ -215,7 +253,6 @@ public final class TCPClientChannel {
     }
 
     deinit {
-        print("Deinited")
         close(deallocate: true)
     }
 
@@ -241,7 +278,8 @@ public final class TCPClientChannel {
                 if nRead >= 0 {
                     let bytes = UnsafeRawBufferPointer(start: .init(buffer.pointee.base), count: numericCast(nRead))
                     let bytesArray = [UInt8](bytes)
-                    contextPtr.pointee.onReceive(bytesArray)
+                    let onReceive = contextPtr.pointee.asyncOnReceive ?? contextPtr.pointee.onReceive
+                    onReceive(bytesArray)
                 } else {
                     if nRead == numericCast(UV_EOF.rawValue) {
                         print("End of file reached")
@@ -264,7 +302,7 @@ public final class TCPClientChannel {
     }
 }
 
-public final class TCPServerChannel {
+public final class TCPServerChannel: EventLoopBound {
     public let eventLoop: EventLoop
 
     public var isClosed: Bool {
@@ -296,7 +334,7 @@ public final class TCPServerChannel {
         handle.pointee.data = UnsafeMutableRawPointer(context)
     }
 
-    public func bind(address: IPAddress, flags: TCPChannelFlags = []) {
+    public func bind(address: IPAddress, flags: TCPChannelFlags = []) throws {
         var flags = flags
         #if os(Windows)
         flags.remove(.reuseport)
@@ -305,14 +343,16 @@ public final class TCPServerChannel {
             uv_tcp_bind(handle, address, flags.rawValue)
         }
         if result != 0 {
-            print("Failed to bind tcp server with error:", mapError(result))
-            return
+            debugOnly {
+                print("Failed to bind tcp server with error:", mapError(result))
+            }
+            throw TCPServerChannelError.failedToBind(reason: mapError(result), errorNumber: numericCast(result))
         }
         context.pointee.state = .bound
     }
 
-    public func listen(backlog: Int = 256) {
-        assert(backlog > 0, "Backlog needs to be more than zero")
+    public func listen(backlog: Int = 256) throws {
+        precondition(backlog > 0, "Backlog needs to be more than zero")
         let result = handle.withMemoryRebound(to: uv_stream_t.self, capacity: 1) { stream in 
             return uv_listen(stream, numericCast(backlog)) { serverStream, status in
                 if status < 0 {
@@ -355,8 +395,10 @@ public final class TCPServerChannel {
             }
         }
         if result != 0 {
-            print("Failed to start listening with error:", mapError(result))
-            return
+            debugOnly {
+                print("Failed to start listening with error:", mapError(result))
+            }
+            throw TCPServerChannelError.failedToListen(reason: mapError(result), errorNumber: numericCast(result))
         }
         context.pointee.state = .listening
     }

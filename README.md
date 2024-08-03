@@ -3,9 +3,6 @@
 This is a package containing a copy of [libuv](https://github.com/libuv/libuv) version 1.48.0 for the use in Swift packages. Currently the supported platforms are Windows, Linux, macOS and iOS. Android should be possible but I haven't gotten to it yet.
 
 # TODO
-- [ ] Make ```bind``` and ```connect``` ```throwing``` for UDPChannels
-- [ ] Make ```bind``` and ```listen``` ```throwing``` for TCPServerChannel
-- [ ] Make ```connect``` ```throwing``` for TCPClientChannel
 - [ ] Consider how ```AsyncUDPChannel``` could be implemented
 - [ ] Consider how ```AsyncUDPConnectedChannel``` could be implemented
 - [ ] Consider how ```AsyncTCPServerChannel``` could be implemented

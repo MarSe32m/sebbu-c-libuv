@@ -98,6 +98,7 @@ public enum IPAddress: CustomStringConvertible {
     }
 
     //TODO: Make version with callback
+    //TODO: Make version with async
     public static func createResolving(loop: EventLoop, host: String, port: Int) -> IPAddress? {
         let req = UnsafeMutablePointer<uv_getaddrinfo_t>.allocate(capacity: 1)
         req.initialize(to: .init())

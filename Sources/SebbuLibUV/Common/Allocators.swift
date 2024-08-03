@@ -73,6 +73,7 @@ internal final class CachedPointerAllocator<T> {
     }
 
     @inline(__always)
+    @inlinable
     func allocate() -> UnsafeMutablePointer<T> {
         if let lock {
             lock.lock(); defer { lock.unlock() }
@@ -82,12 +83,14 @@ internal final class CachedPointerAllocator<T> {
     }
 
     @inline(__always)
+    @inlinable
     func _allocate() -> UnsafeMutablePointer<T> {
         if let ptr = cache.popLast() { return ptr }
         return .allocate(capacity: 1)
     }
 
     @inline(__always)
+    @inlinable
     func deallocate(_ ptr: UnsafeMutablePointer<T>) {
         if let lock {
             lock.lock(); defer { lock.unlock() }
@@ -98,6 +101,7 @@ internal final class CachedPointerAllocator<T> {
     }
 
     @inline(__always)
+    @inlinable
     func _deallocate(_ ptr: UnsafeMutablePointer<T>) {
         ptr.deinitialize(count: 1)
         if cache.count < cacheSize { 

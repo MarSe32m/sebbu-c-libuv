@@ -1,4 +1,4 @@
-/*
+
 public final class AsyncTCPClientChannel: @unchecked Sendable {
     public var eventLoop: EventLoop {
         _channel.eventLoop
@@ -16,49 +16,61 @@ public final class AsyncTCPClientChannel: @unchecked Sendable {
     public init(channel: TCPClientChannel) {
         self._channel = channel
         (_stream, _streamWriter) = AsyncStream<[UInt8]>.makeStream()
-        _channel.onReceive { [weak self] data in
-            self?.onReceive(data)
+        channel.asyncOnReceive {[unowned(unsafe) self] data in 
+            self._streamWriter.yield(data)
         }
         _channel.onClose { [weak self] in
             self?._streamWriter.finish()
         }
     }
 
-    public static func connect(remoteAddress: IPAddress, eventLoop: EventLoop = .default, nodelay: Bool = true, sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) async -> AsyncTCPClientChannel? {
-        await withCheckedContinuation { continuation in
-            TCPClientChannel.connect(remoteAddress: remoteAddress, eventLoop: eventLoop, nodelay: nodelay, sendBufferSize: sendBufferSize, recvBufferSize: recvBufferSize) { client in
-                if let client {
-                    let asyncClient = AsyncTCPClientChannel(channel: client)
-                    continuation.resume(returning: asyncClient)
-                } else {
-                    continuation.resume(returning: nil)
+    public convenience init(loop: EventLoop) async {
+        let channel = await withUnsafeContinuation { continuation in 
+            loop.execute {
+                let _channel = TCPClientChannel(loop: loop)
+                continuation.resume(returning: _channel)
+            }
+        }
+        self.init(channel: channel)
+    }
+
+    public func connect(remoteAddress: IPAddress, nodelay: Bool = true, keepAlive: Int = 60, sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) async throws {
+        try await withUnsafeThrowingContinuation { continuation in 
+            eventLoop.execute {
+                self._channel.asyncOnConnect { result in 
+                    continuation.resume(with: result)
+                    self._channel.asyncOnConnect(nil)
+                }
+                do {
+                    try self._channel.connect(remoteAddress: remoteAddress, nodelay: nodelay, keepAlive: keepAlive, sendBufferSize: sendBufferSize, recvBufferSize: sendBufferSize)
+                } catch {
+                    self._channel.asyncOnConnect(nil)
+                    continuation.resume(throwing: error)
                 }
             }
         }
     }
 
-    public func send(_ data: UnsafeRawBufferPointer) {
-        _channel.send(data)
-    }   
-
     @inline(__always)
-    public func send(_ data: UnsafeBufferPointer<UInt8>) {
-        _channel.send(data)
-    }
-
-    @inline(__always)
-    public func send(_ data: [UInt8]) {
-        _channel.send(data)
+    public func send(_ data: [UInt8]) async throws {
+        try await withUnsafeThrowingContinuation { cont in
+            eventLoop.execute {
+                do {
+                    try self._channel.send(data)
+                    cont.resume()
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+        
     }
 
     public func close() {
-        _channel.close()
+        eventLoop.execute {
+            self._channel.close()
+        }
         _streamWriter.finish()
-    }
-
-    @usableFromInline
-    internal func onReceive(_ data: [UInt8]) {
-        _streamWriter.yield(data)
     }
 }
 
@@ -93,43 +105,59 @@ public final class AsyncTCPServerChannel: @unchecked Sendable {
     @usableFromInline
     internal let _streamWriter: AsyncStream<AsyncTCPClientChannel>.Continuation
 
-    public init(eventLoop: EventLoop = .default) {
-        self._channel = TCPServerChannel(loop: eventLoop)
+    public init(channel: TCPServerChannel) {
+        self._channel = channel
         (_stream, _streamWriter) = AsyncStream<AsyncTCPClientChannel>.makeStream()
-        _channel.onConnection { [weak self] client in
-            let channel = AsyncTCPClientChannel(channel: client)
-            self?.onConnection(channel)
+        channel.asyncOnConnection { [unowned(unsafe) self] client in
+            let client = AsyncTCPClientChannel(channel: client)
+            self._streamWriter.yield(client)
         }
         _channel.onClose { [weak self] in
             self?._streamWriter.finish()
         }
     }
 
-    public init(channel: TCPServerChannel) {
-        self._channel = channel
-        (_stream, _streamWriter) = AsyncStream<AsyncTCPClientChannel>.makeStream()
-        channel.onConnection { [unowned self] client in
-            let channel = AsyncTCPClientChannel(channel: client)
-            self.onConnection(channel)
+    public convenience init(loop: EventLoop) async {
+        let channel = await withUnsafeContinuation { continuation in 
+            loop.execute {
+                let _channel = TCPServerChannel(loop: loop)
+                continuation.resume(returning: _channel)
+            }
+        }
+        self.init(channel: channel)
+    }
+
+    public func bind(address: IPAddress, flags: TCPChannelFlags = []) async throws {
+        try await withUnsafeThrowingContinuation { cont in 
+            eventLoop.execute {
+                do {
+                    try self._channel.bind(address: address, flags: flags)
+                    cont.resume()
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
         }
     }
 
-    public func bind(address: IPAddress, flags: TCPChannelFlags = []) {
-        _channel.bind(address: address, flags: flags)
-    }
-
-    public func listen(backlog: Int = 256) {
-        _channel.listen(backlog: backlog)
+    public func listen(backlog: Int = 256) async throws {
+        try await withUnsafeThrowingContinuation { cont in 
+            eventLoop.execute {
+                do {
+                    try self._channel.listen(backlog: backlog)
+                    cont.resume()
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
     }
 
     public func close() {
-        _channel.close()
+        eventLoop.execute {
+            self._channel.close()
+        }
         _streamWriter.finish()
-    }
-
-    @usableFromInline
-    internal func onConnection(_ client: AsyncTCPClientChannel) {
-        _streamWriter.yield(client)
     }
 }
 
@@ -149,4 +177,3 @@ extension AsyncTCPServerChannel: AsyncSequence {
         AsyncIterator(wrappedIterator: _stream.makeAsyncIterator())
     }
 }
-*/

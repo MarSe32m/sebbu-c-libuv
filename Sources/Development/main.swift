@@ -1,3 +1,5 @@
 testGetAddrInfo()
-testTCPEchoServerClient()
+try await testAsyncTCPEchoServerClient()
+//testTCPEchoServerClient()
 //testUDPEchoServerClient()
+//await testEventLoopExecute()

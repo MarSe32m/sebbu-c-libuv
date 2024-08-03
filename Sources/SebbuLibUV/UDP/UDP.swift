@@ -20,13 +20,13 @@ public struct UDPChannelFlags: OptionSet {
 }
 
 public enum UDPChannelError: Error {
-    case channelAlreadyBound(reason: String)
-    case channelAlreadyConnected(reason: String)
-    case failedToInitializeHandle(reason: String)
-    case failedToBind(reason: String)
-    case failedToConnect(reason: String)
-    case failedToStartReceiving(reason: String)
-    case failedToSend(reason: String)
+    case channelAlreadyBound(reason: String, errorNumber: Int)
+    case channelAlreadyConnected(reason: String, errorNumber: Int)
+    case failedToInitializeHandle(reason: String, errorNumber: Int)
+    case failedToBind(reason: String, errorNumber: Int)
+    case failedToConnect(reason: String, errorNumber: Int)
+    case failedToStartReceiving(reason: String, errorNumber: Int)
+    case failedToSend(reason: String, errorNumber: Int)
 }
 
 public struct UDPChannelPacket {

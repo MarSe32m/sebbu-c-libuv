@@ -1,7 +1,7 @@
 import SebbuCLibUV
 import DequeModule
 
-public final class UDPChannel {
+public final class UDPChannel: EventLoopBound {
     public let eventLoop: EventLoop
 
     public var isClosed: Bool {
@@ -28,10 +28,18 @@ public final class UDPChannel {
         handle.pointee.data = UnsafeMutableRawPointer(context)
     }
 
-    //TODO: Throw errors!
     //Note: For game servers the following are good values: sendBufferSize = 4 * 1024 * 1024, recvBufferSize = 4 * 1024 * 1024
     //Note: For game clients the following are good values: sendBufferSize = 256 * 1024, recvBufferSize = 256 * 1024
-    public func bind(address: IPAddress, flags: UDPChannelFlags = [], sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
+    /// Binds the ```UDPChannel``` to a specific ip address. 
+    /// - Parameters:
+    ///   - address: The ```IPAddress``` that the channel will be bound to
+    ///   - flags: Extra ```UDPChannelFlags```
+    ///   - sendBufferSize: The size of the desired send buffer
+    ///   - recvBufferSize: The size of the desired receive buffer
+    /// - Throws: 
+    ///   - ```UDPChannelError.failedToBind```: If binding failed
+    /// - Note: The method will not throw an error if the send/receive buffer sizes failed to be set.
+    public func bind(address: IPAddress, flags: UDPChannelFlags = [], sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) throws {
         var flags = flags
         #if os(Windows)
         flags.remove(.reuseport)
@@ -48,8 +56,10 @@ public final class UDPChannel {
         }
 
         if result != 0 { 
-            print("Failed to bind udp handle with error:", mapError(result))
-            return
+            debugOnly {
+                print("Failed to bind udp handle with error:", mapError(result))
+            }
+            throw UDPChannelError.failedToBind(reason: mapError(result), errorNumber: numericCast(result))
         }
 
         // Send and receive buffer sizes
@@ -58,16 +68,14 @@ public final class UDPChannel {
                 var value: Int32 = numericCast(sendBufferSize)
                 let result = uv_send_buffer_size(handle, &value)
                 if result != 0 {
-                    let errorString = String(cString: uv_strerror(result))
-                    print("Failed to set send buffer size to", sendBufferSize, "with error:", errorString)
+                    print("Failed to set send buffer size to", sendBufferSize, "with error:", mapError(result))
                 }
             }
             if let recvBufferSize, recvBufferSize > 0 {
                 var value: Int32 = numericCast(recvBufferSize)
                 let result = uv_recv_buffer_size(handle, &value)
                 if result != 0 {
-                    let errorString = String(cString: uv_strerror(result)) 
-                    print("Failed to set receive buffer size to", recvBufferSize, "with error:", errorString)
+                    print("Failed to set receive buffer size to", recvBufferSize, "with error:", mapError(result))
                 }
             }
         }
@@ -102,6 +110,7 @@ public final class UDPChannel {
 
             if nRead < 0 { 
                 print("UDP read error:", mapError(nRead))
+                //TODO: Should we close the socket here?
                 return
             }
 
@@ -114,45 +123,80 @@ public final class UDPChannel {
             onReceive(bytesArray, remoteAddress)
         }
         if result != 0 {
-            print("Couldn't start receiving data with error:", mapError(result))
-            return
+            debugOnly {
+                print("Couldn't start receiving data with error:", mapError(result))
+            }
+            throw UDPChannelError.failedToStartReceiving(reason: mapError(result), errorNumber: numericCast(result))
         }
     }
 
-    public func send(_ data: UnsafeRawBufferPointer, to: IPAddress) {
-        if data.isEmpty { return }
-        //FIXME: The data needs to be valid until the callback is called!
-        let result = to.withSocketHandle { addr in
+    @inline(__always)
+    public func trySend(_ data: UnsafeRawBufferPointer, to: IPAddress) -> Bool {
+        to.withSocketHandle { addr in 
             let buffer = UnsafeMutableBufferPointer(mutating: data.bindMemory(to: Int8.self))
-            var buf = uv_buf_init(buffer.baseAddress, numericCast(data.count))
+            let buf = uv_buf_init(buffer.baseAddress, numericCast(data.count))
+            return withUnsafePointer(to: buf) { buf in 
+                uv_udp_try_send(handle, buf, 1, addr)
+            } >= 0
+        }
+    }
+
+    @inline(__always)
+    public func trySend(_ data: UnsafeBufferPointer<UInt8>, to: IPAddress) -> Bool {
+        trySend(UnsafeRawBufferPointer(data), to: to)
+    }
+
+    @inline(__always)
+    public func trySend(_ data: [UInt8], to: IPAddress) -> Bool {
+        data.withUnsafeBytes { buffer in
+            trySend(buffer, to: to)
+        }
+    }
+
+    public func send(_ data: UnsafeRawBufferPointer, to: IPAddress) throws {
+        if data.isEmpty { return }
+        if trySend(data, to: to) { return }
+        let result = to.withSocketHandle { addr in
+            // The try send failed above so we must copy the data
+            let sendRequestData = context.pointee.sendRequestDataAllocator.allocate(context: context, dataCount: data.count)
+            let mutableData = UnsafeMutableRawBufferPointer(sendRequestData.pointee.data)
+            mutableData.copyMemory(from: data)
+
+            var buf = uv_buf_init(sendRequestData.pointee.data.baseAddress, numericCast(data.count))
             let sendRequest = context.pointee.sendRequestAllocator.allocate()
             sendRequest.initialize(to: .init())
-            sendRequest.pointee.data = handle.pointee.data
-            if uv_udp_try_send(handle, &buf, 1, addr) >= 0 { return 0 }
-            return numericCast(uv_udp_send(sendRequest, handle, &buf, 1, addr) { sendRequest, status in
+            sendRequest.pointee.data = UnsafeMutableRawPointer(sendRequestData)
+            return uv_udp_send(sendRequest, handle, &buf, 1, addr) { sendRequest, status in
                 if status != 0 {
                     print("Error when sending datagram:", mapError(status))
                     return
                 }
                 guard let sendRequest else { return }
-                let contextPtr = sendRequest.pointee.data.assumingMemoryBound(to: UDPChannelContext.self)
+                let sendRequestData = sendRequest.pointee.data.assumingMemoryBound(to: UDPSendRequestData.self)
+                let contextPtr = sendRequestData.pointee.context
                 contextPtr.pointee.sendRequestAllocator.deallocate(sendRequest)
-            })
+                contextPtr.pointee.sendRequestDataAllocator.deallocate(sendRequestData)
+            }
         }
         if result != 0 {
-            print("Failed to enqueue datagram send with error:", mapError(result))
+            debugOnly {
+                print("Failed to enqueue datagram send with error:", mapError(result))
+            }
+            throw UDPChannelError.failedToSend(reason: mapError(result), errorNumber: numericCast(result))
         }
     }   
 
     @inline(__always)
-    public func send(_ data: UnsafeBufferPointer<UInt8>, to: IPAddress) {
-        send(UnsafeRawBufferPointer(data), to: to)
+    public func send(_ data: UnsafeBufferPointer<UInt8>, to: IPAddress) throws {
+        if trySend(data, to: to) { return }
+        try send(UnsafeRawBufferPointer(data), to: to)
     }
 
     @inline(__always)
-    public func send(_ data: [UInt8], to: IPAddress) {
-        data.withUnsafeBytes { buffer in
-            send(buffer, to: to)
+    public func send(_ data: [UInt8], to: IPAddress) throws {
+        if trySend(data, to: to) { return }
+        try data.withUnsafeBytes { buffer in
+            try send(buffer, to: to)
         }
     }
 
@@ -199,7 +243,7 @@ public final class UDPChannel {
 }
 
 /// A connected UDPChannel
-public final class UDPConnectedChannel {
+public final class UDPConnectedChannel: EventLoopBound {
     public let eventLoop: EventLoop
 
     public var isClosed: Bool {
@@ -227,18 +271,26 @@ public final class UDPConnectedChannel {
         handle.pointee.data = UnsafeMutableRawPointer(context)
     }
 
-    //TODO: Throw errors!
     //Note: For game servers the following are good values: sendBufferSize = 4 * 1024 * 1024, recvBufferSize = 4 * 1024 * 1024
     //Note: For game clients the following are good values: sendBufferSize = 256 * 1024, recvBufferSize = 256 * 1024
-    public func connect(remoteAddress: IPAddress, sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) {
+    /// Connects the channel to a specified address
+    /// - Parameters:
+    ///   - remoteAddress: The remote address to which the channel will be connected to
+    ///   - sendBufferSize: The desired size of the send buffer
+    ///   - recvBufferSize: The desired size of the receive buffer
+    /// - Throws: 
+    /// - Note: The method will not throw an error if the send/receive buffer sizes failed to be set.
+    public func connect(remoteAddress: IPAddress, sendBufferSize: Int? = nil, recvBufferSize: Int? = nil) throws {
         // Connect to the remote address
         var result = remoteAddress.withSocketHandle { address in 
             uv_udp_connect(handle, address)
         }
 
         if result != 0 {
-            print("Failed to connect the udp handle to the remote address with error:", mapError(result))
-            return
+            debugOnly {
+                print("Failed to connect the udp handle to the remote address with error:", mapError(result))
+            }
+            throw UDPChannelError.failedToConnect(reason: mapError(result), errorNumber: numericCast(result))
         }
 
         // Send and receive buffer sizes
@@ -247,16 +299,14 @@ public final class UDPConnectedChannel {
                 var value: Int32 = numericCast(sendBufferSize)
                 let result = uv_send_buffer_size(handle, &value)
                 if result != 0 {
-                    let errorString = String(cString: uv_strerror(result))
-                    print("Failed to set send buffer size to", sendBufferSize, "with error:", errorString)
+                    print("Failed to set send buffer size to", sendBufferSize, "with error:", mapError(result))
                 }
             }
             if let recvBufferSize, recvBufferSize > 0 {
                 var value: Int32 = numericCast(recvBufferSize)
                 let result = uv_recv_buffer_size(handle, &value)
                 if result != 0 {
-                    let errorString = String(cString: uv_strerror(result)) 
-                    print("Failed to set receive buffer size to", recvBufferSize, "with error:", errorString)
+                    print("Failed to set receive buffer size to", recvBufferSize, "with error:", mapError(result))
                 }
             }
         }
@@ -277,6 +327,7 @@ public final class UDPConnectedChannel {
             }
             if nRead < 0 { 
                 print("UDP read error:", mapError(nRead))
+                return
             }
             let contextPtr = _handle.pointee.data.assumingMemoryBound(to: UDPChannelContext.self)
             let bufferBasePtr = UnsafeMutableRawPointer(buffer.pointee.base)?.bindMemory(to: UInt8.self, capacity: numericCast(buffer.pointee.len))
@@ -296,43 +347,75 @@ public final class UDPConnectedChannel {
             onReceive(bytesArray, remoteAddress)
         }
         if result != 0 {
-            print("Couldn't start receiving data with error:", mapError(result))
-            return
+            debugOnly {
+                print("Couldn't start receiving data with error:", mapError(result))
+            }
+            throw UDPChannelError.failedToStartReceiving(reason: mapError(result), errorNumber: numericCast(result))
         }
     }
 
-    public func send(_ data: UnsafeRawBufferPointer) {
-        if data.isEmpty { return }
-        //FIXME: The data needs to be valid until the callback is called!
+    @inline(__always)
+    public func trySend(_ data: UnsafeRawBufferPointer) -> Bool {
         let buffer = UnsafeMutableBufferPointer(mutating: data.bindMemory(to: Int8.self))
-        var buf = uv_buf_init(buffer.baseAddress, numericCast(data.count))
+        let buf = uv_buf_init(buffer.baseAddress, numericCast(data.count))
+        return withUnsafePointer(to: buf) { buf in 
+            uv_udp_try_send(handle, buf, 1, nil)
+        } >= 0
+    }
+
+    @inline(__always)
+    public func trySend(_ data: UnsafeBufferPointer<UInt8>) -> Bool {
+        trySend(UnsafeRawBufferPointer(data))
+    }
+
+    @inline(__always)
+    public func trySend(_ data: [UInt8]) -> Bool {
+        data.withUnsafeBytes { buffer in
+            trySend(buffer)
+        }
+    }
+
+    @inlinable
+    public func send(_ data: UnsafeRawBufferPointer) throws {
+        if data.isEmpty { return }
+        if trySend(data) { return }
+        // The try send failed so we must copy the data
+        let sendRequestData = context.pointee.sendRequestDataAllocator.allocate(context: context, dataCount: numericCast(data.count))
+        let mutableData = UnsafeMutableRawBufferPointer(sendRequestData.pointee.data)
+        mutableData.copyMemory(from: data)
+
+        var buf = uv_buf_init(sendRequestData.pointee.data.baseAddress, numericCast(data.count))
         let sendRequest = context.pointee.sendRequestAllocator.allocate()
         sendRequest.initialize(to: .init())
-        sendRequest.pointee.data = handle.pointee.data
-        if uv_udp_try_send(handle, &buf, 1, nil) >= 0 { return }
+        sendRequest.pointee.data = UnsafeMutableRawPointer(sendRequestData)
         let result = uv_udp_send(sendRequest, handle, &buf, 1, nil) { sendRequest, status in
             if status != 0 {
                 print("Error when sending datagram:", mapError(status))
                 return
             }
             guard let sendRequest else { return }
-            let contextPtr = sendRequest.pointee.data.assumingMemoryBound(to: UDPChannelContext.self)
+            let sendRequestData = sendRequest.pointee.data.assumingMemoryBound(to: UDPSendRequestData.self)
+            let contextPtr = sendRequestData.pointee.context
             contextPtr.pointee.sendRequestAllocator.deallocate(sendRequest)
+            contextPtr.pointee.sendRequestDataAllocator.deallocate(sendRequestData)
         }
         if result != 0 {
-            print("Failed to enqueue datagram send with error:", mapError(result))
+            debugOnly {
+                print("Failed to enqueue datagram send with error:", mapError(result))
+            }
+            throw UDPChannelError.failedToSend(reason: mapError(result), errorNumber: numericCast(result))
         }
     }   
 
     @inline(__always)
-    public func send(_ data: UnsafeBufferPointer<UInt8>) {
-        send(UnsafeRawBufferPointer(data))
+    public func send(_ data: UnsafeBufferPointer<UInt8>) throws {
+        try send(UnsafeRawBufferPointer(data))
     }
 
     @inline(__always)
-    public func send(_ data: [UInt8]) {
-        data.withUnsafeBytes { buffer in
-            send(buffer)
+    public func send(_ data: [UInt8]) throws {
+        try data.withUnsafeBytes { buffer in
+            try send(buffer)
         }
     }
 

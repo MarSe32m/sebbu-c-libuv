@@ -92,7 +92,8 @@ let package = Package(
             targets: ["SebbuCLibUV"]),
         .library(name: "SebbuLibUV", targets: ["SebbuLibUV"])
     ],
-    dependencies: [.package(url: "https://github.com/apple/swift-collections.git", from: "1.1.2")],
+    dependencies: [.package(url: "https://github.com/apple/swift-collections.git", from: "1.1.2"),
+                   .package(url: "https://github.com/apple/swift-atomics.git", from: "1.2.0")],
     targets: [
         .target(
             name: "SebbuCLibUV",
@@ -129,11 +130,12 @@ let package = Package(
         .target(
             name: "SebbuLibUV", 
             dependencies: ["SebbuCLibUV",
-                            .product(name: "DequeModule", package: "swift-collections")]
+                            .product(name: "DequeModule", package: "swift-collections"),
+                            .product(name: "Atomics", package: "swift-atomics")]
         ),
         .executableTarget(
             name: "Development",
-            dependencies: ["SebbuLibUV"]
+            dependencies: ["SebbuLibUV", "SebbuCLibUV"]
         )
     ]
 )

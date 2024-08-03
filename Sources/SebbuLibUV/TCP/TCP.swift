@@ -27,5 +27,13 @@ public enum TCPClientChannelState {
 }
 
 public enum TCPClientChannelError: Error {
-    case connectionFailure(Int, String)
+    case failedToSetKeepalive(reason: String, errorNumber: Int)
+    case failedToSetNodelay(reason: String, errorNumber: Int)
+    case failedToSend(reason: String, errorNumber: Int)
+    case connectionFailure(reason: String, errorNumber: Int)
+}
+
+public enum TCPServerChannelError: Error {
+    case failedToBind(reason: String, errorNumber: Int)
+    case failedToListen(reason: String, errorNumber: Int)
 }
