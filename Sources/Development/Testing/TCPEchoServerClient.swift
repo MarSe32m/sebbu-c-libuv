@@ -35,7 +35,6 @@ func testAsyncTCPEchoServerClient() async throws {
             print("Done receiving")
         }
         print("Connected")
-        client.close()
         while let line = readLine() {
             if line == "quit" { 
                 client.close()
