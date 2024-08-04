@@ -26,9 +26,9 @@ public final class EventLoop {
     @usableFromInline
     internal let _type: EventLoopType
 
-    public static let `default`: EventLoop = EventLoop(global: true)
-
     public let allocator: Allocator
+
+    public static let `default`: EventLoop = EventLoop(_type: .global, allocator: MallocAllocator())
 
     @usableFromInline
     internal var _thread: uv_thread_t?
@@ -45,60 +45,60 @@ public final class EventLoop {
 
     @usableFromInline
     internal var callbackID: ManagedAtomic<Int> = .init(0)
-
+    
     @usableFromInline
     internal var beforeLoopTickCallbacks: [(id: Int, work: () -> Void)] = []
-
+    
     @usableFromInline
     internal var afterLoopTickCallbacks: [(id: Int, work: () -> Void)] = []
-
+    
     @usableFromInline
     internal let prepareContext = UnsafeMutablePointer<CallbackContext>.allocate(capacity: 1)
 
     @usableFromInline
     internal let prepareHandle = UnsafeMutablePointer<uv_prepare_t>.allocate(capacity: 1)
-
+    
     @usableFromInline
     internal let checkContext = UnsafeMutablePointer<CallbackContext>.allocate(capacity: 1)
-
+    
     @usableFromInline
     internal let checkHandle = UnsafeMutablePointer<uv_check_t>.allocate(capacity: 1)
-
+    
     @usableFromInline
     internal let notificationCount: ManagedAtomic<Int> = .init(0)
-
+    
     @usableFromInline
     internal let notificationHandle = UnsafeMutablePointer<uv_async_t>.allocate(capacity: 1)
-
+    
     @usableFromInline
     internal let notificationContext = UnsafeMutablePointer<CallbackContext>.allocate(capacity: 1)
-
+    
     //TODO: Use MPSCQueue, or atleast Mutex<> from standard library
     @usableFromInline
     internal let workQueueLock: NSLock = NSLock()
-
+    
     @usableFromInline
     internal var pendingWork: [() -> Void] = []
-
+    
     @usableFromInline
     internal var workQueue: [() -> Void] = []
 
-    public init(allocator: Allocator = MallocAllocator()) {
-        self._type = .instance
-        self._handle = .allocate(capacity: 1)
-        self._handle.initialize(to: uv_loop_t())
-        self.allocator = allocator
-        uv_loop_init(self._handle)
-        registerPrepareAndCheckHandles()
-        registerNotification()
-        registerWorkQueueDraining()
+    public convenience init(allocator: Allocator = MallocAllocator()) {
+        self.init(_type: .instance, allocator: allocator)
     }
 
-    internal init(global: Bool) {
-        assert(global)
-        self._type = .global
-        self._handle = uv_default_loop()
-        self.allocator = MallocAllocator()
+    internal init(_type: EventLoopType, allocator: Allocator) {
+        self._type = _type
+        self.allocator = allocator
+        switch _type {
+            case .instance:
+                self._handle = .allocate(capacity: 1)
+                self._handle.initialize(to: uv_loop_t())
+                uv_loop_init(self._handle)
+            case .global:
+                self._handle = uv_default_loop()
+        }
+        
         registerPrepareAndCheckHandles()
         registerNotification()
         registerWorkQueueDraining()
@@ -152,7 +152,7 @@ public final class EventLoop {
     public func registerAfterTickCallback(_ callback: @escaping () -> Void) -> Int {
         let id = callbackID.wrappingIncrementThenLoad(ordering: .relaxed)
         execute { self.afterLoopTickCallbacks.append((id, callback)) }
-        return id   
+        return id
     }
 
     public func removeAfterTickCallback(id: Int) {
@@ -181,7 +181,6 @@ public final class EventLoop {
             guard let context = handle?.pointee.data.assumingMemoryBound(to: CallbackContext.self) else { fatalError("unreacahble") }
             context.pointee.callback()
         }
-
         checkContext.initialize(to: .init(callback: { [unowned(unsafe) self] in
             for (_, callback) in self.afterLoopTickCallbacks {
                 callback()
@@ -196,16 +195,21 @@ public final class EventLoop {
     }
 
     private func cleanUpPrepareAndCheckHandles() {
-        beforeLoopTickCallbacks.removeAll()
-        uv_prepare_stop(prepareHandle)
+        prepareHandle.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
+            uv_close(handle) { handle in 
+                handle?.deallocate()
+            }
+        }
         prepareContext.deinitialize(count: 1)
         prepareContext.deallocate()
-        prepareHandle.deallocate()
-        afterLoopTickCallbacks.removeAll()
-        uv_check_stop(checkHandle)
+        
+        checkHandle.withMemoryRebound(to: uv_handle_t.self, capacity: 1) { handle in 
+            uv_close(handle) { handle in 
+                handle?.deallocate()
+            }
+        }
         checkContext.deinitialize(count: 1)
         checkContext.deallocate()
-        checkHandle.deallocate()
     }
 
      private func registerNotification() {
@@ -240,7 +244,6 @@ public final class EventLoop {
         uv_loop_close(_handle)
         _handle.deinitialize(count: 1)
         _handle.deallocate()
-        print("Event loop deinit")
     }
 }
 
