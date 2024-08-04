@@ -29,6 +29,8 @@ internal struct TCPClientChannelContext {
     @usableFromInline
     internal var state: TCPClientChannelState = .disconnected
 
+    @inlinable
+    @inline(__always)
     mutating func triggerOnClose() {
         onClose?()
         onClose = nil

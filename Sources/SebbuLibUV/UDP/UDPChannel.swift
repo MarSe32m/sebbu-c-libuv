@@ -131,8 +131,10 @@ public final class UDPChannel: EventLoopBound {
     }
 
     @inline(__always)
-    public func trySend(_ data: UnsafeRawBufferPointer, to: IPAddress) -> Bool {
-        to.withSocketHandle { addr in 
+    @inlinable
+    internal func _trySend(_ data: UnsafeRawBufferPointer, to: IPAddress) -> Bool {
+        assert(eventLoop.inEventLoop)
+        return to.withSocketHandle { addr in 
             let buffer = UnsafeMutableBufferPointer(mutating: data.bindMemory(to: Int8.self))
             let buf = uv_buf_init(buffer.baseAddress, numericCast(data.count))
             return withUnsafePointer(to: buf) { buf in 
@@ -142,20 +144,18 @@ public final class UDPChannel: EventLoopBound {
     }
 
     @inline(__always)
-    public func trySend(_ data: UnsafeBufferPointer<UInt8>, to: IPAddress) -> Bool {
-        trySend(UnsafeRawBufferPointer(data), to: to)
-    }
-
-    @inline(__always)
     public func trySend(_ data: [UInt8], to: IPAddress) -> Bool {
-        data.withUnsafeBytes { buffer in
-            trySend(buffer, to: to)
+        assert(eventLoop.inEventLoop)
+        return data.withUnsafeBytes { buffer in
+            _trySend(buffer, to: to)
         }
     }
 
-    public func send(_ data: UnsafeRawBufferPointer, to: IPAddress) throws {
+    @inlinable
+    internal func send(_ data: UnsafeRawBufferPointer, to: IPAddress) throws {
+        assert(eventLoop.inEventLoop)
         if data.isEmpty { return }
-        if trySend(data, to: to) { return }
+        if _trySend(data, to: to) { return }
         let result = to.withSocketHandle { addr in
             // The try send failed above so we must copy the data
             let sendRequestData = context.pointee.sendRequestDataAllocator.allocate(context: context, dataCount: data.count)
@@ -187,14 +187,8 @@ public final class UDPChannel: EventLoopBound {
     }   
 
     @inline(__always)
-    public func send(_ data: UnsafeBufferPointer<UInt8>, to: IPAddress) throws {
-        if trySend(data, to: to) { return }
-        try send(UnsafeRawBufferPointer(data), to: to)
-    }
-
-    @inline(__always)
     public func send(_ data: [UInt8], to: IPAddress) throws {
-        if trySend(data, to: to) { return }
+        assert(eventLoop.inEventLoop)
         try data.withUnsafeBytes { buffer in
             try send(buffer, to: to)
         }
@@ -355,7 +349,9 @@ public final class UDPConnectedChannel: EventLoopBound {
     }
 
     @inline(__always)
-    public func trySend(_ data: UnsafeRawBufferPointer) -> Bool {
+    @inlinable
+    internal func _trySend(_ data: UnsafeRawBufferPointer) -> Bool {
+        assert(eventLoop.inEventLoop)
         let buffer = UnsafeMutableBufferPointer(mutating: data.bindMemory(to: Int8.self))
         let buf = uv_buf_init(buffer.baseAddress, numericCast(data.count))
         return withUnsafePointer(to: buf) { buf in 
@@ -364,21 +360,17 @@ public final class UDPConnectedChannel: EventLoopBound {
     }
 
     @inline(__always)
-    public func trySend(_ data: UnsafeBufferPointer<UInt8>) -> Bool {
-        trySend(UnsafeRawBufferPointer(data))
-    }
-
-    @inline(__always)
     public func trySend(_ data: [UInt8]) -> Bool {
-        data.withUnsafeBytes { buffer in
-            trySend(buffer)
+        assert(eventLoop.inEventLoop)
+        return data.withUnsafeBytes { buffer in
+            _trySend(buffer)
         }
     }
 
     @inlinable
-    public func send(_ data: UnsafeRawBufferPointer) throws {
+    internal func send(_ data: UnsafeRawBufferPointer) throws {
         if data.isEmpty { return }
-        if trySend(data) { return }
+        if _trySend(data) { return }
         // The try send failed so we must copy the data
         let sendRequestData = context.pointee.sendRequestDataAllocator.allocate(context: context, dataCount: numericCast(data.count))
         let mutableData = UnsafeMutableRawBufferPointer(sendRequestData.pointee.data)
@@ -408,12 +400,8 @@ public final class UDPConnectedChannel: EventLoopBound {
     }   
 
     @inline(__always)
-    public func send(_ data: UnsafeBufferPointer<UInt8>) throws {
-        try send(UnsafeRawBufferPointer(data))
-    }
-
-    @inline(__always)
     public func send(_ data: [UInt8]) throws {
+        assert(eventLoop.inEventLoop)
         try data.withUnsafeBytes { buffer in
             try send(buffer)
         }

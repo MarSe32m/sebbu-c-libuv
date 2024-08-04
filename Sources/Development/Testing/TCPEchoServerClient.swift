@@ -1,53 +1,6 @@
 import SebbuLibUV
 import Foundation
 
-func testAsyncTCPEchoServerClient() async throws {
-    let loop = EventLoop.default
-    Thread.detachNewThread { while true { loop.run() } }
-    let bindIP = IPv4Address.create(host: "0.0.0.0", port: 25566)!
-    let bindAddress = IPAddress.v4(bindIP)
-    let remoteIP = IPv4Address.create(host: "127.0.0.1", port: 25566)!
-    let remoteAddress = IPAddress.v4(remoteIP)
-
-    let server = await AsyncTCPServerChannel(loop: loop)
-    try await server.bind(address: bindAddress)
-    try await server.listen()
-    Task.detached {
-        try await withThrowingDiscardingTaskGroup { group in 
-            for await client in server {
-                group.addTask {
-                    for await data in client {
-                        try await client.send(data)
-                    }
-                    print("Client finished")
-                }
-            }
-        }
-    }
-    
-    while true {
-        let client = await AsyncTCPClientChannel(loop: loop)
-        try await client.connect(remoteAddress: remoteAddress)
-        Task.detached {
-            for await data in client {
-                print("Received data from server:", data)
-            }
-            print("Done receiving")
-        }
-        print("Connected")
-        while let line = readLine() {
-            if line == "quit" { 
-                client.close()
-                break
-            }
-            let bytes = [UInt8](line.utf8)
-            try await client.send(bytes)
-        }
-    }
-
-    
-}
-
 func testTCPEchoServerClient() {
     let loop = EventLoop.default
     let bindIP = IPv4Address.create(host: "0.0.0.0", port: 25566)!
@@ -101,4 +54,47 @@ func testTCPEchoServerClient() {
     }
 }
 
+func testAsyncTCPEchoServerClient() async throws {
+    let loop = EventLoop.default
+    Thread.detachNewThread { while true { loop.run() } }
+    let bindIP = IPv4Address.create(host: "0.0.0.0", port: 25566)!
+    let bindAddress = IPAddress.v4(bindIP)
+    let remoteIP = IPv4Address.create(host: "127.0.0.1", port: 25566)!
+    let remoteAddress = IPAddress.v4(remoteIP)
 
+    let server = await AsyncTCPServerChannel(loop: loop)
+    try await server.bind(address: bindAddress)
+    try await server.listen()
+    Task.detached {
+        try await withThrowingDiscardingTaskGroup { group in 
+            for await client in server {
+                group.addTask {
+                    for await data in client {
+                        try await client.send(data)
+                    }
+                    print("Client finished")
+                }
+            }
+        }
+    }
+    
+    while true {
+        let client = await AsyncTCPClientChannel(loop: loop)
+        try await client.connect(remoteAddress: remoteAddress)
+        Task.detached {
+            for await data in client {
+                print("Received data from server:", data)
+            }
+            print("Done receiving")
+        }
+        print("Connected")
+        while let line = readLine() {
+            if line == "quit" { 
+                client.close()
+                break
+            }
+            let bytes = [UInt8](line.utf8)
+            try await client.send(bytes)
+        }
+    }
+}

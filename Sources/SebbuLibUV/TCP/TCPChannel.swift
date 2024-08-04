@@ -114,7 +114,9 @@ public final class TCPClientChannel: EventLoopBound {
     }
 
     @inline(__always)
+    @inlinable
     internal func _trySend(_ buf: UnsafeMutablePointer<uv_buf_t>) -> Int {
+        assert(eventLoop.inEventLoop)
         return handle.withMemoryRebound(to: uv_stream_t.self, capacity: 1) { stream in 
             var bytesSent = 0
             while buf.pointee.len > 0 {
@@ -128,26 +130,27 @@ public final class TCPClientChannel: EventLoopBound {
         }
     }
 
-    public func trySend(_ data: UnsafeRawBufferPointer) -> Int {
-        data.withMemoryRebound(to: Int8.self) { buffer in 
+    @inlinable
+    @inline(__always)
+    internal func trySend(_ data: UnsafeRawBufferPointer) -> Int {
+        assert(eventLoop.inEventLoop)
+        return data.withMemoryRebound(to: Int8.self) { buffer in 
             var buf = uv_buf_init(UnsafeMutablePointer(mutating: buffer.baseAddress), numericCast(buffer.count))
             return _trySend(&buf)
         }
     }
 
     @inline(__always)
-    public func trySend(_ data: UnsafeBufferPointer<UInt8>) -> Int {
-        trySend(UnsafeRawBufferPointer(data))
-    }
-
-    @inline(__always)
     public func trySend(_ data: [UInt8]) -> Int {
-        data.withUnsafeBytes { buffer in 
+        assert(eventLoop.inEventLoop)
+        return data.withUnsafeBytes { buffer in 
             trySend(buffer)
         }
     }
 
-    public func send(_ data: UnsafeRawBufferPointer) throws {
+    @inlinable
+    internal func send(_ data: UnsafeRawBufferPointer) throws {
+        assert(eventLoop.inEventLoop)
         let result: Int32 = data.withMemoryRebound(to: Int8.self) { buffer in 
             return handle.withMemoryRebound(to: uv_stream_t.self, capacity: 1) { stream in 
                 var buf = uv_buf_init(UnsafeMutablePointer(mutating: buffer.baseAddress), numericCast(buffer.count))
@@ -193,12 +196,8 @@ public final class TCPClientChannel: EventLoopBound {
     }
 
     @inline(__always)
-    public func send(_ data: UnsafeBufferPointer<UInt8>) throws {
-        try send(UnsafeRawBufferPointer(data))
-    }
-
-    @inline(__always)
     public func send(_ data: [UInt8]) throws {
+        assert(eventLoop.inEventLoop)
         try data.withUnsafeBytes { buffer in
             try send(buffer)
         }

@@ -97,9 +97,8 @@ public enum IPAddress: CustomStringConvertible {
         return "\(ip):\(port)"
     }
 
-    //TODO: Make version with callback
-    //TODO: Make version with async
-    public static func createResolving(loop: EventLoop, host: String, port: Int) -> IPAddress? {
+    public static func createResolvingBlocking(host: String, port: Int) -> IPAddress? {
+        let loop = EventLoop()
         let req = UnsafeMutablePointer<uv_getaddrinfo_t>.allocate(capacity: 1)
         req.initialize(to: .init())
         defer { 
@@ -131,6 +130,59 @@ public enum IPAddress: CustomStringConvertible {
         return nil
     }
 
+    public static func createResolving(loop: EventLoop, host: String, port: Int, callback: @escaping (IPAddress?) -> Void) {
+        loop.execute {
+            let req = UnsafeMutablePointer<uv_getaddrinfo_t>.allocate(capacity: 1)
+            req.initialize(to: .init())
+            let reqContext = UnsafeMutablePointer<(IPAddress?) -> Void>.allocate(capacity: 1)
+            reqContext.initialize(to: callback)
+            req.pointee.data = .init(reqContext)
+            let result = uv_getaddrinfo(loop._handle, req, { req, status, addrInfo in
+                guard let callbackPtr = req?.pointee.data.assumingMemoryBound(to: ((IPAddress?) -> Void).self) else { fatalError("unreachable") }
+                defer {
+                    callbackPtr.deinitialize(count: 1)
+                    callbackPtr.deallocate()
+                    req!.deallocate()
+                }
+                guard status == 0 else { 
+                    callbackPtr.pointee(nil)
+                    return
+                }
+                let info = addrInfo!
+                defer { uv_freeaddrinfo(info) }
+                if let addrPointer = info.pointee.ai_addr {
+                    let addressBytes = UnsafeRawPointer(addrPointer)
+                    switch info.pointee.ai_family {
+                        case AF_INET:
+                            callbackPtr.pointee(.v4(.init(address: addressBytes.load(as: sockaddr_in.self))))
+                        case AF_INET6:
+                            callbackPtr.pointee(.v6(.init(address: addressBytes.load(as: sockaddr_in6.self))))
+                        default:
+                            callbackPtr.pointee(nil)
+                    }
+                    return
+                }
+                callbackPtr.pointee(nil)
+            }, host, String(port), nil)
+            if result != 0 {
+                debugOnly {
+                    print("Failed to retrieve addrinfo")
+                }
+                callback(nil)
+                return
+            }
+        }
+    }
+
+    public static func createResolving(loop: EventLoop, host: String, port: Int) async -> IPAddress?  {
+        await withUnsafeContinuation { continuation in
+            createResolving(loop: loop, host: host, port: port) { address in 
+                continuation.resume(returning: address)
+            }
+        }
+    }
+
+    @inlinable
     internal func withSocketHandle<T>(_ body: (UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
         switch self {
             case .v4(let ipv4):
