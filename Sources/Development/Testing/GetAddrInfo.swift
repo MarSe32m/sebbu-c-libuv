@@ -11,11 +11,14 @@ func testGetAddrInfo() async {
         done = true
     } 
     while !done { loop.run(.nowait) }
-    Task.detached {
+    let loopTask = Task.detached {
         while true {
-            loop.run()
+            try Task.checkCancellation()
+            loop.run(.nowait)
+            await Task.yield()
         }
     }
     address = await IPAddress.createResolving(loop: loop, host: "google.com", port: 8080)
     print(address ?? "no address")
+    loopTask.cancel()
 }
