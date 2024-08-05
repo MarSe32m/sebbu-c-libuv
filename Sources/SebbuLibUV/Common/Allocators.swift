@@ -49,9 +49,6 @@ public final class FixedSizeAllocator: Allocator {
     }
 }
 
-//TODO: Use Mutex from stdlib
-import class Foundation.NSLock
-
 @usableFromInline
 internal final class CachedPointerAllocator<T> {
     @usableFromInline
@@ -62,20 +59,24 @@ internal final class CachedPointerAllocator<T> {
 
     //TODO: Use Mutex from stdlib
     @usableFromInline
-    internal let lock: NSLock?
+    internal let lock: Lock
+
+    @usableFromInline
+    internal let locked: Bool
 
     @usableFromInline
     init(cacheSize: Int = 256, locked: Bool = false) {
         self.cache = []
         self.cacheSize = cacheSize
         self.cache.reserveCapacity(cacheSize)
-        self.lock = locked ? NSLock() : nil
+        self.lock = Lock()
+        self.locked = locked
     }
 
     @inline(__always)
     @inlinable
     func allocate() -> UnsafeMutablePointer<T> {
-        if let lock {
+        if locked {
             lock.lock(); defer { lock.unlock() }
             return _allocate()
         }
@@ -92,7 +93,7 @@ internal final class CachedPointerAllocator<T> {
     @inline(__always)
     @inlinable
     func deallocate(_ ptr: UnsafeMutablePointer<T>) {
-        if let lock {
+        if locked {
             lock.lock(); defer { lock.unlock() }
             _deallocate(ptr)
         } else {

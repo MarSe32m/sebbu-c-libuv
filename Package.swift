@@ -85,12 +85,9 @@ sources.append("src/unix/random-sysctl-linux.c")
 
 let package = Package(
     name: "sebbu-c-libuv",
-    platforms: [.macOS(.v14), .iOS(.v16)],
+    platforms: [.macOS(.v13), .iOS(.v16)],
     products: [
-        .library(
-            name: "SebbuCLibUV",
-            targets: ["SebbuCLibUV"]),
-        .library(name: "SebbuLibUV", targets: ["SebbuLibUV"])
+        .library(name: "SebbuCLibUV", targets: ["SebbuCLibUV"])
     ],
     dependencies: [.package(url: "https://github.com/apple/swift-collections.git", from: "1.1.2"),
                    .package(url: "https://github.com/apple/swift-atomics.git", from: "1.2.0")],

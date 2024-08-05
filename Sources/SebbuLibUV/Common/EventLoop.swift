@@ -1,5 +1,4 @@
 import SebbuCLibUV
-import Foundation
 
 //TODO: Remove once we have Atomic<> from standard library
 import Atomics
@@ -75,7 +74,7 @@ public final class EventLoop {
     
     //TODO: Use MPSCQueue, or atleast Mutex<> from standard library
     @usableFromInline
-    internal let workQueueLock: NSLock = NSLock()
+    internal let workQueueLock: Lock = Lock()
     
     @usableFromInline
     internal var pendingWork: [() -> Void] = []
